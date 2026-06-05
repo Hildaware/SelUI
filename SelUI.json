@@ -1,0 +1,10 @@
+{
+  "Name": "SelUI",
+  "Author": "Sel",
+  "Punchline": "A streamlined, FF-flavored HUD replacement.",
+  "Description": "A clean, opinionated UI replacement for unit frames, party frames, nameplates and more. Plug-and-play modules with minimal configuration and a deliberately FF-like look.",
+  "RepoUrl": "https://github.com/Hildaware/SelUI",
+  "Tags": [
+    "UI"
+  ]
+}
