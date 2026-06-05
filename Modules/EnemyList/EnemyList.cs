@@ -13,7 +13,7 @@ namespace SelUI.Modules.EnemyList;
 ///     The enemy list: a stack of compact frames for aggro'd enemies, each reusing the shared unit
 ///     frame plus a threat (enmity) icon. Clickable / mouseover like the other frames.
 /// </summary>
-public sealed class EnemyList : IHudModule
+public sealed class EnemyList : IHudModule, IMovableModule
 {
     private const float ThreatIconSize = 20f;
 
@@ -47,6 +47,11 @@ public sealed class EnemyList : IHudModule
     public string Name => "Enemy List";
 
     public ModuleConfig Config => _config;
+
+    public string EditLabel => Name;
+    public Vector2 EditTopLeft => _config.Position;
+    public Vector2 EditSize => new(_config.Row.Width, _config.RowHeight * _config.MaxRows);
+    public void MoveBy(Vector2 delta) => _config.Position += delta;
 
     public void Dispose()
     {

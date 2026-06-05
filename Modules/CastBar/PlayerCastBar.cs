@@ -17,7 +17,7 @@ namespace SelUI.Modules.CastBar;
 ///     icon docked to the left — a square sized to span the name + bar block. Interruptible casts use a
 ///     red fill. The bar fades in/out and lingers briefly on completion.
 /// </summary>
-public sealed class PlayerCastBar : IHudModule
+public sealed class PlayerCastBar : IHudModule, IMovableModule
 {
     private const float FadeDuration = 0.15f;     // seconds to fade fully in or out
     private const float Margin = 12f;             // glow-bloom breathing room around the content
@@ -55,6 +55,17 @@ public sealed class PlayerCastBar : IHudModule
     public string Name => "Player Cast Bar";
 
     public ModuleConfig Config => _config;
+
+    public string EditLabel => Name;
+
+    // The visual block extends left of Position (the icon) and above it (the name row); mirror the
+    // layout math in Draw so the box matches the rendered cast bar.
+    public Vector2 EditTopLeft => _config.Position - new Vector2(_config.NameFontSize + _config.BarHeight, _config.NameFontSize);
+
+    public Vector2 EditSize =>
+        new(_config.NameFontSize + _config.BarHeight + _config.Width, _config.BarHeight + _config.NameFontSize);
+
+    public void MoveBy(Vector2 delta) => _config.Position += delta;
 
     public void Dispose()
     {

@@ -41,6 +41,31 @@ public sealed class UnitFrame
         _statuses = statuses;
     }
 
+    /// <summary>
+    ///     The bars' footprint for a config, computed from the same vertical-layout rules as
+    ///     <see cref="Draw" /> but driven by config flags rather than a live snapshot (used by edit mode,
+    ///     where there's no actor). Mana/cast count only when they stack below the health bar; overlapping
+    ///     bars add no height. The job icon's left overhang is excluded.
+    /// </summary>
+    public static Vector2 MeasureBoxSize(UnitFrameConfig cfg)
+    {
+        var nameAboveBar = cfg.ShowName && !cfg.NameRightOfIcon;
+        var headerH = 0f;
+        if (cfg.ShowLevel) headerH = MathF.Max(headerH, cfg.LevelFontSize);
+        if (nameAboveBar) headerH = MathF.Max(headerH, cfg.NameFontSize);
+
+        var hpH = cfg.ShowHealthBar ? cfg.HealthBarHeight : 0f;
+        var mpH = cfg.ShowManaBar && !cfg.ManaOverlapHealth ? cfg.ManaBarHeight : 0f;
+        var castH = cfg.ShowCastBar && !cfg.CastOverlapHealth ? cfg.CastBarHeight : 0f;
+
+        var y = headerH;
+        if (hpH > 0f) y += hpH;
+        if (mpH > 0f) y += cfg.Gap + mpH;
+        if (castH > 0f) y += cfg.Gap + castH;
+
+        return new Vector2(cfg.Width, y);
+    }
+
     public void Draw(string id, UnitFrameConfig cfg, IGameObject? actor, Vector2? positionOverride = null, bool selected = false,
         Action<IGameObject>? onLeftClick = null, Action<IGameObject>? onRightClick = null, Action<IGameObject>? onHover = null,
         PreviewUnit? preview = null, bool drawStatuses = true, bool fade = true, string? title = null, bool titleAbove = false,

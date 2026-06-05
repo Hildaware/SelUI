@@ -9,7 +9,7 @@ namespace SelUI.Modules.UnitFrames;
 ///     delegate that supplies the actor to draw — so "Player Frame" and "Target Frame" are the same
 ///     class with different actor providers. Party / enemy-list entries will reuse it the same way.
 /// </summary>
-public sealed class UnitFrameModule : IHudModule
+public sealed class UnitFrameModule : IHudModule, IMovableModule
 {
     private readonly Func<IGameObject?> _actorProvider;
     private readonly UnitFrameConfig _config;
@@ -40,6 +40,11 @@ public sealed class UnitFrameModule : IHudModule
     public string Name { get; }
 
     public ModuleConfig Config => _config;
+
+    public string EditLabel => Name;
+    public Vector2 EditTopLeft => _config.Position;
+    public Vector2 EditSize => UnitFrame.MeasureBoxSize(_config);
+    public void MoveBy(Vector2 delta) => _config.Position += delta;
 
     public void Draw()
     {

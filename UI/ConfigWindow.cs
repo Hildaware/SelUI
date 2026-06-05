@@ -18,6 +18,7 @@ namespace SelUI.UI;
 public sealed class ConfigWindow : Window
 {
     private readonly Configuration.Configuration _config;
+    private readonly EditModeState _editState;
     private readonly FontManager _fontManager;
     private readonly LabelRenderer _labels;
     private readonly IReadOnlyList<IHudModule> _modules;
@@ -31,7 +32,8 @@ public sealed class ConfigWindow : Window
         IDalamudPluginInterface pluginInterface,
         FontManager fontManager,
         LabelRenderer labels,
-        IReadOnlyList<IHudModule> modules)
+        IReadOnlyList<IHudModule> modules,
+        EditModeState editState)
         : base("SelUI Settings###SelUIConfig")
     {
         _config = config;
@@ -40,6 +42,7 @@ public sealed class ConfigWindow : Window
         _fontManager = fontManager;
         _labels = labels;
         _modules = modules;
+        _editState = editState;
 
         Size = new Vector2(420f, 520f);
         SizeCondition = ImGuiCond.FirstUseEver;
@@ -58,6 +61,13 @@ public sealed class ConfigWindow : Window
 
         ImGui.Separator();
         changed |= DrawFontPicker();
+        ImGui.Separator();
+
+        if (ImGui.Button(_editState.Active ? "Lock HUD Layout" : "Edit HUD Layout"))
+            _editState.Active = !_editState.Active;
+        if (_editState.Active)
+            ImGui.TextDisabled("Drag a frame to move it; changes save automatically.");
+
         ImGui.Separator();
 
         ImGui.TextDisabled("Modules");

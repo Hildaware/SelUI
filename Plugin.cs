@@ -1,3 +1,4 @@
+using System.Linq;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
@@ -23,6 +24,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private readonly ICommandManager _commandManager;
     private readonly ConfigWindow _configWindow;
+    private readonly EditModeOverlay _editOverlay;
     private readonly FontManager _fontManager;
     private readonly HudManager _hudManager;
     private readonly MouseoverManager _mouseover;
@@ -120,12 +122,17 @@ public sealed class Plugin : IDalamudPlugin
 
         _hudManager = new HudManager(modules, () => config.Enabled, clientState, log);
 
-        _configWindow = new ConfigWindow(config, pluginInterface, _fontManager, labels, _hudManager.Modules);
+        var editState = new EditModeState();
+        _editOverlay = new EditModeOverlay(modules.OfType<IMovableModule>().ToList(), labels, editState,
+            () => config.Save(pluginInterface));
+
+        _configWindow = new ConfigWindow(config, pluginInterface, _fontManager, labels, _hudManager.Modules, editState);
         _windowSystem = new WindowSystem("SelUI");
         _windowSystem.AddWindow(_configWindow);
 
         pluginInterface.UiBuilder.Draw += _windowSystem.Draw;
         pluginInterface.UiBuilder.Draw += _hudManager.Draw;
+        pluginInterface.UiBuilder.Draw += _editOverlay.Draw; // after the HUD, so boxes sit on top
         pluginInterface.UiBuilder.Draw += _mouseover.Apply; // after the HUD draws, so hover is recorded
         pluginInterface.UiBuilder.OpenConfigUi += OpenConfigUi;
         pluginInterface.UiBuilder.OpenMainUi += OpenConfigUi;
@@ -142,6 +149,7 @@ public sealed class Plugin : IDalamudPlugin
         _pluginInterface.UiBuilder.OpenMainUi -= OpenConfigUi;
         _pluginInterface.UiBuilder.OpenConfigUi -= OpenConfigUi;
         _pluginInterface.UiBuilder.Draw -= _mouseover.Apply;
+        _pluginInterface.UiBuilder.Draw -= _editOverlay.Draw;
         _pluginInterface.UiBuilder.Draw -= _hudManager.Draw;
         _pluginInterface.UiBuilder.Draw -= _windowSystem.Draw;
 

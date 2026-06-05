@@ -15,7 +15,7 @@ namespace SelUI.Modules.Party;
 ///     shared unit-frame renderer and only adds party-specific bits (layout, solo handling, the party
 ///     leader crown).
 /// </summary>
-public sealed class PartyFrames : IHudModule
+public sealed class PartyFrames : IHudModule, IMovableModule
 {
     private const uint LeaderIconId = 61521;
 
@@ -54,6 +54,11 @@ public sealed class PartyFrames : IHudModule
     public string Name => "Party Frames";
 
     public ModuleConfig Config => _config;
+
+    public string EditLabel => Name;
+    public Vector2 EditTopLeft => _config.Position;
+    public Vector2 EditSize => new(_config.Row.Width, _config.RowHeight * PreviewCount);
+    public void MoveBy(Vector2 delta) => _config.Position += delta;
 
     public void Dispose()
     {
