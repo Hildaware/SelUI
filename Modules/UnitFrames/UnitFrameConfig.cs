@@ -31,6 +31,12 @@ public sealed class UnitFrameConfig : ModuleConfig
     /// <summary>Hide the frame while the player is in combat (only wired for the target frame).</summary>
     public bool HideInCombat { get; set; }
 
+    /// <summary>
+    ///     Fade the frame out — and stop it taking clicks — once the actor is past action range (~30y).
+    ///     Opt-in per frame (party / alliance rows); the player frame, nameplates, etc. leave it off.
+    /// </summary>
+    public bool RangeFade { get; set; }
+
     public float FontSize { get; set; } = 14f;
     public float Gap { get; set; } = 2f;
 
@@ -41,6 +47,9 @@ public sealed class UnitFrameConfig : ModuleConfig
 
     /// <summary>Draw the health text on the left of the bar instead of the right.</summary>
     public bool HealthTextOnLeft { get; set; }
+
+    /// <summary>Vertical nudge of the health text from its centered position (positive = down). Baked per-frame.</summary>
+    public float HealthTextOffsetY { get; set; }
 
     // Mana bar
     public bool ShowManaBar { get; set; } = true;
@@ -91,6 +100,12 @@ public sealed class UnitFrameConfig : ModuleConfig
     public float NameFontSize { get; set; } = 26f;
     public float LevelFontSize { get; set; } = 26f;
 
+    /// <summary>Vertical nudge of the name from its computed baseline (negative = up). Baked per-frame.</summary>
+    public float NameOffsetY { get; set; }
+
+    /// <summary>Draw a highlight texture behind a centered name (used by name-only nameplates to lift the text off the world). Baked per-frame.</summary>
+    public bool NameBackground { get; set; }
+
     // Job icon
     public bool ShowJobIcon { get; set; } = true;
     public float JobIconSize { get; set; } = 54f;
@@ -136,13 +151,17 @@ public sealed class UnitFrameConfig : ModuleConfig
         };
     }
 
-    /// <summary>Compact defaults for a party-list row.</summary>
+    /// <summary>
+    ///     Compact defaults for a party-list row. The party frame exposes almost no row-level config — these
+    ///     values are baked here and re-applied on every load, so tuning a party row means editing this method.
+    /// </summary>
     public static UnitFrameConfig PartyRowDefault()
     {
         return new UnitFrameConfig
         {
             Width = 240f,
             HealthBarHeight = 20f,
+            HealthText = HealthTextMode.None,
             ManaBarHeight = 8f,
             ManaWidthFactor = 0.75f,
             ManaOverlapHealth = true,
@@ -151,11 +170,13 @@ public sealed class UnitFrameConfig : ModuleConfig
             NameCentered = false,
             NameRightOfIcon = true,
             NameRightOfIconGap = -6f,
-            NameFontSize = 16f,
+            NameFontSize = 20f,
+            NameOffsetY = -2f,
             JobIconSize = 48f,
             JobIconOffsetX = 4f,
             JobIconAnchorY = 0f,
-            HideWhenNoActor = false
+            HideWhenNoActor = false,
+            RangeFade = true // dim party members you can't reach (heals/buffs ~30y)
         };
     }
 
@@ -172,15 +193,19 @@ public sealed class UnitFrameConfig : ModuleConfig
             ShowLevel = false,
             NameCentered = false,
             NameOnBarLine = true,
-            NameFontSize = 14f,
-            FontSize = 10f,
+            NameFontSize = 16f,
+            FontSize = 12f,
             HealthText = HealthTextMode.Percent,
             HealthTextOnLeft = true,
+            HealthTextOffsetY = 4f,
             HideWhenNoActor = false
         };
     }
 
-    /// <summary>Sensible defaults for the target frame (upper area, hidden when nothing is targeted).</summary>
+    /// <summary>
+    ///     Defaults for the target frame (upper area, hidden when nothing is targeted). Appearance is baked
+    ///     and re-applied on every load (see Plugin); only Position, Width and HideInCombat stay user state.
+    /// </summary>
     public static UnitFrameConfig TargetDefault()
     {
         return new UnitFrameConfig
@@ -188,9 +213,40 @@ public sealed class UnitFrameConfig : ModuleConfig
             Position = new Vector2(760f, 120f),
             Width = 600f,
             HealthBarHeight = 16f,
+            HealthText = HealthTextMode.None,
+            ShowManaBar = false,
+            ShowCastBar = false,
+            JobIconSize = 62f,
             HideWhenNoActor = true,
             HideInCombat = true,
             NameCentered = true
+        };
+    }
+
+    /// <summary>
+    ///     Compact defaults for an alliance-list row: a small job-colored health bar with the name and job
+    ///     icon docked top-left, like a party row but scaled down. HP only — no mana / cast / level / text.
+    ///     Baked design, built fresh by the alliance module (not persisted).
+    /// </summary>
+    public static UnitFrameConfig AllianceRowDefault()
+    {
+        return new UnitFrameConfig
+        {
+            Width = 140f,
+            HealthBarHeight = 12f,
+            HealthText = HealthTextMode.None,
+            ShowManaBar = false,
+            ShowCastBar = false,
+            ShowLevel = false,
+            NameRightOfIcon = true,
+            NameRightOfIconGap = -4f,
+            NameFontSize = 14f,
+            NameOffsetY = -1f,
+            JobIconSize = 28f,
+            JobIconOffsetX = 4f,
+            JobIconAnchorY = 0f,
+            HideWhenNoActor = false,
+            RangeFade = true // dim alliance members you can't reach (heals/rez ~30y)
         };
     }
 }

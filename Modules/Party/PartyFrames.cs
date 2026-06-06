@@ -1,12 +1,8 @@
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Objects.Types;
-using Dalamud.Interface.Textures;
-using Dalamud.Interface.Utility.Raii;
 using Dalamud.Plugin.Services;
 using SelUI.Game;
 using SelUI.Modules.UnitFrames;
-using SelUI.Rendering;
-using SelUI.UI;
 
 namespace SelUI.Modules.Party;
 
@@ -17,7 +13,10 @@ namespace SelUI.Modules.Party;
 /// </summary>
 public sealed class PartyFrames : IHudModule, IMovableModule
 {
-    private const uint LeaderIconId = 61521;
+    // Leader crown — baked appearance (drawn on top by UnitFrame, see UnitFrameConfig leader params).
+    private const float LeaderIconSize = 20f;
+    private static readonly Vector2 LeaderIconOffset = new(-8f, 8f);
+    private static readonly string[] GrowthItems = ["Down", "Up"]; // index 0 = down, 1 = up (matches GrowUp)
 
     private readonly PartyFramesConfig _config;
     private readonly UnitFrame _frame;
@@ -27,15 +26,13 @@ public sealed class PartyFrames : IHudModule, IMovableModule
     private static readonly uint[] PreviewJobs = [19, 24, 28, 33, 25, 34, 23, 21];
 
     private readonly ITargetManager _targets;
-    private readonly ITextureProvider _textures;
     private readonly IReadOnlyList<uint> _mockBuffIcons;
     private readonly IReadOnlyList<uint> _mockDebuffIcons;
     private readonly Action<IGameObject> _onHover;
     private readonly Action<IGameObject> _onLeftClick;
     private readonly Action<IGameObject> _onRightClick;
-    private ISharedImmediateTexture? _leaderIcon;
 
-    public PartyFrames(PartyFramesConfig config, IPartyList party, IObjectTable objects, ITargetManager targets, MouseoverManager mouseover, UnitFrame frame, ITextureProvider textures,
+    public PartyFrames(PartyFramesConfig config, IPartyList party, IObjectTable objects, ITargetManager targets, MouseoverManager mouseover, UnitFrame frame,
         IReadOnlyList<uint> mockBuffIcons, IReadOnlyList<uint> mockDebuffIcons)
     {
         _config = config;
@@ -43,7 +40,6 @@ public sealed class PartyFrames : IHudModule, IMovableModule
         _objects = objects;
         _targets = targets;
         _frame = frame;
-        _textures = textures;
         _mockBuffIcons = mockBuffIcons;
         _mockDebuffIcons = mockDebuffIcons;
         _onLeftClick = actor => _targets.Target = actor;
@@ -56,9 +52,17 @@ public sealed class PartyFrames : IHudModule, IMovableModule
     public ModuleConfig Config => _config;
 
     public string EditLabel => Name;
-    public Vector2 EditTopLeft => _config.Position;
+
+    public Vector2 EditTopLeft => _config.GrowUp
+        ? _config.Position - new Vector2(0f, (PreviewCount - 1) * _config.RowHeight)
+        : _config.Position;
+
     public Vector2 EditSize => new(_config.Row.Width, _config.RowHeight * PreviewCount);
     public void MoveBy(Vector2 delta) => _config.Position += delta;
+
+    /// <summary>Top-left of row <paramref name="index" />, stacking up or down per config.</summary>
+    private Vector2 RowOrigin(int index) =>
+        _config.Position + new Vector2(0f, (_config.GrowUp ? -1f : 1f) * index * _config.RowHeight);
 
     public void Dispose()
     {
@@ -73,7 +77,7 @@ public sealed class PartyFrames : IHudModule, IMovableModule
         {
             for (var i = 0; i < PreviewCount; i++)
             {
-                var origin = _config.Position + new Vector2(0f, i * _config.RowHeight);
+                var origin = RowOrigin(i);
                 var unit = new PreviewUnit
                 {
                     Name = $"Player {i + 1}",
@@ -84,10 +88,12 @@ public sealed class PartyFrames : IHudModule, IMovableModule
                     BuffIcons = _mockBuffIcons,
                     DebuffIcons = _mockDebuffIcons
                 };
-                _frame.Draw($"SelUI_Party{i}", _config.Row, null, origin, false, preview: unit);
-
-                if (i == 0 && _config.ShowLeaderIcon)
-                    DrawLeaderIcon(i, origin);
+                // The last two rows preview the out-of-range dim (see UnitFrameConfig.RangeFade); the
+                // first row previews the leader crown.
+                var outOfRange = i >= PreviewCount - 2;
+                _frame.Draw($"SelUI_Party{i}", _config.Row, null, origin, false, preview: unit,
+                    alphaMultiplier: outOfRange ? UnitFrame.OutOfRangeAlpha : 1f,
+                    leader: i == 0, leaderIconSize: LeaderIconSize, leaderIconOffset: LeaderIconOffset);
             }
 
             return;
@@ -130,6 +136,14 @@ public sealed class PartyFrames : IHudModule, IMovableModule
             changed = true;
         }
 
+        var grow = _config.GrowUp ? 1 : 0;
+        ImGui.SetNextItemWidth(160f);
+        if (ImGui.Combo("Growth direction", ref grow, GrowthItems, GrowthItems.Length))
+        {
+            _config.GrowUp = grow == 1;
+            changed = true;
+        }
+
         var solo = _config.ShowWhenSolo;
         if (ImGui.Checkbox("Show when solo", ref solo))
         {
@@ -144,46 +158,17 @@ public sealed class PartyFrames : IHudModule, IMovableModule
             changed = true;
         }
 
-        var leader = _config.ShowLeaderIcon;
-        if (ImGui.Checkbox("Show leader icon", ref leader))
-        {
-            _config.ShowLeaderIcon = leader;
-            changed = true;
-        }
-
-        if (_config.ShowLeaderIcon)
-        {
-            var size = _config.LeaderIconSize;
-            if (ImGui.DragFloat("Leader icon size", ref size, 0.5f, 8f, 64f, "%.0f"))
-            {
-                _config.LeaderIconSize = size;
-                changed = true;
-            }
-
-            var offset = _config.LeaderIconOffset;
-            if (ImGui.DragFloat2("Leader icon offset", ref offset))
-            {
-                _config.LeaderIconOffset = offset;
-                changed = true;
-            }
-        }
-
-        if (ImGui.CollapsingHeader("Row style"))
-        {
-            using var indent = ImRaii.PushIndent();
-            changed |= UnitFrameConfigUI.Draw(_config.Row);
-        }
+        // Row appearance (bars, name, job icon, buffs/debuffs) and the leader crown are baked, not
+        // user-configurable — see UnitFrameConfig.PartyRowDefault and StatusLayouts.Party*.
 
         return changed;
     }
 
     private void DrawRow(int index, IGameObject? actor, bool isLeader)
     {
-        var origin = _config.Position + new Vector2(0f, index * _config.RowHeight);
-        _frame.Draw($"SelUI_Party{index}", _config.Row, actor, origin, IsSelected(actor), _onLeftClick, _onRightClick, _onHover);
-
-        if (isLeader && _config.ShowLeaderIcon)
-            DrawLeaderIcon(index, origin);
+        var origin = RowOrigin(index);
+        _frame.Draw($"SelUI_Party{index}", _config.Row, actor, origin, IsSelected(actor), _onLeftClick, _onRightClick, _onHover,
+            leader: isLeader, leaderIconSize: LeaderIconSize, leaderIconOffset: LeaderIconOffset);
     }
 
     /// <summary>Whether this actor is the player's current target (hard or gamepad soft target).</summary>
@@ -192,16 +177,5 @@ public sealed class PartyFrames : IHudModule, IMovableModule
         if (actor == null) return false;
         return (_targets.Target != null && _targets.Target.Address == actor.Address)
                || (_targets.SoftTarget != null && _targets.SoftTarget.Address == actor.Address);
-    }
-
-    private void DrawLeaderIcon(int index, Vector2 rowOrigin)
-    {
-        _leaderIcon ??= _textures.GetFromGameIcon(new GameIconLookup(LeaderIconId));
-        var wrap = _leaderIcon.GetWrapOrEmpty();
-
-        var size = new Vector2(_config.LeaderIconSize);
-        var pos = rowOrigin + _config.LeaderIconOffset;
-        DrawHelper.DrawInWindow($"SelUI_PartyLeader{index}", pos, size, false,
-            dl => dl.AddImage(wrap.Handle, pos, pos + size));
     }
 }

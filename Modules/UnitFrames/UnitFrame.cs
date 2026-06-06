@@ -18,27 +18,55 @@ namespace SelUI.Modules.UnitFrames;
 public sealed class UnitFrame
 {
     private const float CastFontScale = 0.85f;
+    private const float TitleFontDrop = 6f; // title (nameplate-only) sits a few px smaller than the name
+
+    // Name highlight: the FFXIV item-slot highlight (the "highlight" texture from BetterBags), drawn
+    // behind a centered name so name-only nameplates read as more than floating text.
+    // The _hr1 variant is 2x resolution; GetFromGame loads the exact path (no hr1 substitution), so the
+    // source-px coords must be in _hr1 space (double the base coords). UVs are derived from the loaded
+    // texture's real size at draw time, so the result is the same regardless of the player's HD setting.
+    private const string NameBgTexturePath = "ui/uld/NamePlate_hr1.tex";
+    private static readonly Vector4 NameBgSrc = new(0f, 0f, 264f, 32f); // highlight sub-rect (_hr1 source px): x, y, w, h
+    private const float NameBgCap = 32f;       // horizontal 3-slice cap width (_hr1 source px) — keeps the rounded ends crisp
+    private const float NameBgPadX = 24f;      // breathing room each side of the name
+    private const float NameBgPadY = 10f;      // breathing room above/below the name (adds 2x to bar height)
+    private const float NameBgOffsetY = 1f;    // vertical nudge of the highlight (positive = down)
+    private const float NameBgOpacity = 0.5f;  // baked tint alpha
+    private static readonly uint NameBgTint = Colors.FromHex("000000"); // multiplies the texture RGB (black = dark backing)
     private const float LabelGap = 6f;      // horizontal gap between the level and the name
     private const float LevelPadding = 16f; // gap between the bar's left edge and the level text
     private const float OverlapPad = 6f; // right padding when a bar (mana / cast) overlaps the health bar
     private const float FadeDuration = 0.25f; // seconds to fade a frame fully in or out
 
+    // Range fade (opt-in via UnitFrameConfig.RangeFade): once the actor is past action range the frame
+    // dims toward RangeMinAlpha over a short ramp and stops taking clicks.
+    private const float RangeFadeDistance = 30f; // yalms — most heals / party utility reach this far
+    private const float RangeFadeWidth = 3f;     // yalms of smooth ramp past the threshold
+
+    /// <summary>Dimmed alpha for a frame whose unit is fully out of range (also used by list previews).</summary>
+    public const float OutOfRangeAlpha = 0.3f;
+
+    private const uint LeaderIconId = 61521; // party / alliance leader crown, drawn on top of the frame
+
     private readonly BarRenderer _bars;
     private readonly IDataManager _data;
     private readonly Dictionary<uint, ISharedImmediateTexture> _iconCache = new();
     private readonly LabelRenderer _labels;
+    private readonly IObjectTable _objects;
     private readonly Dictionary<string, FrameState> _states = new();
     private readonly StatusRenderer _statuses;
     private readonly ITextureProvider _textures;
     private ExcelSheet<LuminaAction>? _actionSheet;
+    private ISharedImmediateTexture? _nameBgTexture;
 
-    public UnitFrame(BarRenderer bars, LabelRenderer labels, ITextureProvider textures, IDataManager data, StatusRenderer statuses)
+    public UnitFrame(BarRenderer bars, LabelRenderer labels, ITextureProvider textures, IDataManager data, StatusRenderer statuses, IObjectTable objects)
     {
         _bars = bars;
         _labels = labels;
         _textures = textures;
         _data = data;
         _statuses = statuses;
+        _objects = objects;
     }
 
     /// <summary>
@@ -47,12 +75,12 @@ public sealed class UnitFrame
     ///     where there's no actor). Mana/cast count only when they stack below the health bar; overlapping
     ///     bars add no height. The job icon's left overhang is excluded.
     /// </summary>
-    public static Vector2 MeasureBoxSize(UnitFrameConfig cfg)
+    public Vector2 MeasureBoxSize(UnitFrameConfig cfg)
     {
         var nameAboveBar = cfg.ShowName && !cfg.NameRightOfIcon;
         var headerH = 0f;
-        if (cfg.ShowLevel) headerH = MathF.Max(headerH, cfg.LevelFontSize);
-        if (nameAboveBar) headerH = MathF.Max(headerH, cfg.NameFontSize);
+        if (cfg.ShowLevel) headerH = MathF.Max(headerH, _labels.Scale(cfg.LevelFontSize));
+        if (nameAboveBar) headerH = MathF.Max(headerH, _labels.Scale(cfg.NameFontSize));
 
         var hpH = cfg.ShowHealthBar ? cfg.HealthBarHeight : 0f;
         var mpH = cfg.ShowManaBar && !cfg.ManaOverlapHealth ? cfg.ManaBarHeight : 0f;
@@ -69,7 +97,8 @@ public sealed class UnitFrame
     public void Draw(string id, UnitFrameConfig cfg, IGameObject? actor, Vector2? positionOverride = null, bool selected = false,
         Action<IGameObject>? onLeftClick = null, Action<IGameObject>? onRightClick = null, Action<IGameObject>? onHover = null,
         PreviewUnit? preview = null, bool drawStatuses = true, bool fade = true, string? title = null, bool titleAbove = false,
-        float alphaMultiplier = 1f, ImDrawListPtr? drawListOverride = null, uint markerIcon = 0)
+        float alphaMultiplier = 1f, ImDrawListPtr? drawListOverride = null, uint markerIcon = 0, Vector3? rangePosition = null,
+        bool leader = false, float leaderIconSize = 0f, Vector2 leaderIconOffset = default)
     {
         var character = actor as ICharacter;
         var battle = actor as IBattleChara;
@@ -113,6 +142,25 @@ public sealed class UnitFrame
             alpha = 1f;
         }
 
+        // Range fade: opt-in frames (party / alliance) dim and stop taking clicks once the unit is past
+        // action range. Measured the way the game does — horizontal centre distance minus both hitbox
+        // radii. Live actors carry their own position; the alliance frames (no live actor) pass the
+        // party-list position via rangePosition so out-of-range members still dim.
+        var inRange = true;
+        var rangePos = actor?.Position ?? rangePosition;
+        if (cfg.RangeFade && rangePos is { } unitPos)
+        {
+            var self = _objects.LocalPlayer;
+            if (self != null && (actor == null || self.Address != actor.Address))
+            {
+                var radii = self.HitboxRadius + (actor?.HitboxRadius ?? 0.5f);
+                var gap = HorizontalDistance(self.Position, unitPos) - radii;
+                inRange = gap <= RangeFadeDistance;
+                var t = Math.Clamp((gap - RangeFadeDistance) / RangeFadeWidth, 0f, 1f);
+                alpha *= 1f - t * (1f - OutOfRangeAlpha);
+            }
+        }
+
         // Distance-fade (and any future external dimmer) multiplies the computed alpha.
         alpha *= alphaMultiplier;
 
@@ -122,8 +170,8 @@ public sealed class UnitFrame
         var fs = cfg.FontSize;
         var nameAboveBar = cfg.ShowName && !cfg.NameRightOfIcon;
         var headerH = 0f;
-        if (cfg.ShowLevel) headerH = MathF.Max(headerH, cfg.LevelFontSize);
-        if (nameAboveBar) headerH = MathF.Max(headerH, cfg.NameFontSize);
+        if (cfg.ShowLevel) headerH = MathF.Max(headerH, _labels.Scale(cfg.LevelFontSize));
+        if (nameAboveBar) headerH = MathF.Max(headerH, _labels.Scale(cfg.NameFontSize));
 
         var hpH = cfg.ShowHealthBar ? cfg.HealthBarHeight : 0f;
         var mpH = snap.ShowMana ? cfg.ManaBarHeight : 0f;
@@ -196,25 +244,52 @@ public sealed class UnitFrame
         {
             left = MathF.Min(left, nameLeft);
             right = MathF.Max(right, nameLeft + nameSize.X);
+
+            // The name-highlight texture spills past the text on every side — give it room.
+            if (cfg.NameBackground)
+            {
+                var bgCx = origin.X + cfg.Width / 2f;
+                var bgHalfW = nameSize.X / 2f + NameBgPadX;
+                var bgCenterY = origin.Y + hpY + cfg.NameOffsetY - nameSize.Y / 2f + NameBgOffsetY;
+                var bgHalfH = nameSize.Y / 2f + NameBgPadY;
+                left = MathF.Min(left, bgCx - bgHalfW);
+                right = MathF.Max(right, bgCx + bgHalfW);
+                top = MathF.Min(top, bgCenterY - bgHalfH);
+                bottom = MathF.Max(bottom, bgCenterY + bgHalfH);
+            }
         }
 
         // A title line above/below the name needs room and may be wider than the bar.
         if (!string.IsNullOrEmpty(title))
         {
-            var titleSize = cfg.NameFontSize - 4f;
+            var titleSize = cfg.NameFontSize - TitleFontDrop;
+            var titleH = _labels.Scale(titleSize);
             var titleW = _labels.Measure(title, titleSize).X;
             var center = origin.X + cfg.Width / 2f;
             left = MathF.Min(left, center - titleW / 2f);
             right = MathF.Max(right, center + titleW / 2f);
             if (titleAbove)
-                top = MathF.Min(top, origin.Y + hpY - nameSize.Y - 2f - titleSize);
+                top = MathF.Min(top, origin.Y + hpY - nameSize.Y - 2f - titleH);
             else
-                bottom = MathF.Max(bottom, origin.Y + hpY + 2f + titleSize);
+                bottom = MathF.Max(bottom, origin.Y + hpY + 2f + titleH);
+        }
+
+        // Leader crown: a small badge over the frame's top-left corner. Drawn on the frame's own draw
+        // list (below) so it always sits above the bars, rather than in a separate window whose z-order
+        // against the bar window is fragile.
+        var hasLeader = leader && leaderIconSize > 0f;
+        var leaderTopLeft = origin + leaderIconOffset;
+        if (hasLeader)
+        {
+            top = MathF.Min(top, leaderTopLeft.Y);
+            left = MathF.Min(left, leaderTopLeft.X);
+            right = MathF.Max(right, leaderTopLeft.X + leaderIconSize);
+            bottom = MathF.Max(bottom, leaderTopLeft.Y + leaderIconSize);
         }
 
         // Marker badge (e.g. a FATE icon): a small icon centered just above the frame's content.
         var hasMarker = markerIcon != 0;
-        var markerSize = cfg.NameFontSize * 1.3f;
+        var markerSize = _labels.Scale(cfg.NameFontSize * 1.3f);
         var markerCenter = new Vector2(origin.X + cfg.Width / 2f, top - 2f - markerSize / 2f);
         if (hasMarker)
         {
@@ -231,7 +306,7 @@ public sealed class UnitFrame
 
         // Clickable frames take input. The hit area is the content (bars/icon/name), excluding the
         // glow margin, so clicks land where the frame actually is.
-        var interactive = actor != null && (onLeftClick != null || onRightClick != null || onHover != null);
+        var interactive = actor != null && inRange && (onLeftClick != null || onRightClick != null || onHover != null);
         var hitMin = new Vector2(left, top);
         var hitMax = new Vector2(right, bottom);
 
@@ -269,7 +344,7 @@ public sealed class UnitFrame
                         ? (12f, DrawAnchor.Left)
                         : (cfg.Width - 4f, DrawAnchor.Right);
                     _labels.Draw(dl, HealthText(cfg.HealthText, snap.HpCurrent, snap.HpMax),
-                        pos + new Vector2(hx, hpH / 2f), fs, cfg.TextColor, hAnchor, alpha: alpha);
+                        pos + new Vector2(hx, hpH / 2f + cfg.HealthTextOffsetY), fs, cfg.TextColor, hAnchor, alpha: alpha);
                 }
             }
 
@@ -330,24 +405,31 @@ public sealed class UnitFrame
             if (cfg.ShowName && snap.Name.Length > 0)
             {
                 if (cfg.NameRightOfIcon)
-                    _labels.Draw(dl, snap.Name, new Vector2(nameAnchorLeft, iconCenterY),
+                    _labels.Draw(dl, snap.Name, new Vector2(nameAnchorLeft, iconCenterY + cfg.NameOffsetY),
                         cfg.NameFontSize, nameColor, DrawAnchor.Left, alpha: alpha);
                 else if (cfg.NameCentered)
-                    _labels.Draw(dl, snap.Name, new Vector2(origin.X + cfg.Width / 2f, baseline),
+                {
+                    var nameCx = origin.X + cfg.Width / 2f;
+                    if (cfg.NameBackground)
+                        DrawNameBackground(dl,
+                            new Vector2(nameCx, baseline + cfg.NameOffsetY - nameSize.Y / 2f + NameBgOffsetY),
+                            nameSize.X + 2f * NameBgPadX, nameSize.Y + 2f * NameBgPadY, alpha);
+                    _labels.Draw(dl, snap.Name, new Vector2(nameCx, baseline + cfg.NameOffsetY),
                         cfg.NameFontSize, nameColor, DrawAnchor.Bottom, alpha: alpha);
+                }
                 else
                 {
                     // Left-aligned: either above the bar (bottom on the bar top) or centered on the bar top.
                     var nameX = textLeft + (showLevel ? levelWidth + LabelGap : 0f);
                     var nameAnchor = cfg.NameOnBarLine ? DrawAnchor.Left : DrawAnchor.BottomLeft;
-                    _labels.Draw(dl, snap.Name, new Vector2(nameX, baseline), cfg.NameFontSize, nameColor, nameAnchor, alpha: alpha);
+                    _labels.Draw(dl, snap.Name, new Vector2(nameX, baseline + cfg.NameOffsetY), cfg.NameFontSize, nameColor, nameAnchor, alpha: alpha);
                 }
             }
 
             // Optional title line (pet/minion owner, or a player's title) above or below the name.
             if (!string.IsNullOrEmpty(title))
             {
-                var titleSize = cfg.NameFontSize - 4f;
+                var titleSize = cfg.NameFontSize - TitleFontDrop;
                 var cx = origin.X + cfg.Width / 2f;
                 if (titleAbove)
                     _labels.Draw(dl, title, new Vector2(cx, baseline - nameSize.Y - 2f), titleSize, cfg.TitleColor,
@@ -372,6 +454,14 @@ public sealed class UnitFrame
                 var tl = markerCenter - new Vector2(markerSize / 2f);
                 dl.AddImage(wrap.Handle, tl, tl + new Vector2(markerSize), Vector2.Zero, Vector2.One,
                     Colors.MultiplyAlpha(0xFFFFFFFFu, alpha));
+            }
+
+            // Leader crown, drawn last so it sits above the bars and job icon.
+            if (hasLeader)
+            {
+                var wrap = GetIcon(LeaderIconId).GetWrapOrEmpty();
+                dl.AddImage(wrap.Handle, leaderTopLeft, leaderTopLeft + new Vector2(leaderIconSize),
+                    Vector2.Zero, Vector2.One, Colors.MultiplyAlpha(0xFFFFFFFFu, alpha));
             }
         }
 
@@ -434,6 +524,14 @@ public sealed class UnitFrame
         return prefixWidth + _labels.Measure(number, size).X;
     }
 
+    /// <summary>Distance between two points in the horizontal (X/Z) plane, ignoring height.</summary>
+    private static float HorizontalDistance(Vector3 a, Vector3 b)
+    {
+        var dx = a.X - b.X;
+        var dz = a.Z - b.Z;
+        return MathF.Sqrt(dx * dx + dz * dz);
+    }
+
     private static string HealthText(HealthTextMode mode, uint current, uint max)
     {
         var pct = max > 0 ? (int)MathF.Round(current / (float)max * 100f) : 0;
@@ -452,6 +550,39 @@ public sealed class UnitFrame
         tex = _textures.GetFromGameIcon(new GameIconLookup(iconId));
         _iconCache[iconId] = tex;
         return tex;
+    }
+
+    /// <summary>
+    ///     Draw the name highlight as a horizontal 3-slice (fixed rounded caps, stretched middle) centered
+    ///     on <paramref name="center" />, sized to fit a name of the given content box.
+    /// </summary>
+    private void DrawNameBackground(ImDrawListPtr dl, Vector2 center, float contentW, float contentH, float alpha)
+    {
+        _nameBgTexture ??= _textures.GetFromGame(NameBgTexturePath);
+        var wrap = _nameBgTexture.GetWrapOrEmpty();
+        if (wrap.Width <= 0 || wrap.Height <= 0) return;
+
+        var tint = Colors.MultiplyAlpha(NameBgTint, alpha * NameBgOpacity);
+
+        float texW = wrap.Width, texH = wrap.Height;
+        var u0 = NameBgSrc.X / texW;
+        var v0 = NameBgSrc.Y / texH;
+        var u1 = (NameBgSrc.X + NameBgSrc.Z) / texW;
+        var v1 = (NameBgSrc.Y + NameBgSrc.W) / texH;
+        var capU = NameBgCap / texW;
+
+        var bgW = MathF.Max(contentW, 2f * NameBgCap);
+        var bgH = contentH;
+        var tl = center - new Vector2(bgW, bgH) / 2f;
+
+        // Caps scale with the bar height (the source region is NameBgSrc.W tall) so they stay proportional.
+        var capDest = MathF.Min(NameBgCap * (bgH / NameBgSrc.W), bgW / 2f);
+        float y0 = tl.Y, y1 = tl.Y + bgH;
+        float xL0 = tl.X, xL1 = tl.X + capDest, xR1 = tl.X + bgW, xR0 = xR1 - capDest;
+
+        dl.AddImage(wrap.Handle, new Vector2(xL0, y0), new Vector2(xL1, y1), new Vector2(u0, v0), new Vector2(u0 + capU, v1), tint);
+        dl.AddImage(wrap.Handle, new Vector2(xL1, y0), new Vector2(xR0, y1), new Vector2(u0 + capU, v0), new Vector2(u1 - capU, v1), tint);
+        dl.AddImage(wrap.Handle, new Vector2(xR0, y0), new Vector2(xR1, y1), new Vector2(u1 - capU, v0), new Vector2(u1, v1), tint);
     }
 
     private string ActionName(uint actionId)

@@ -1,6 +1,7 @@
 using Dalamud.Configuration;
 using Dalamud.Interface.FontIdentifier;
 using Dalamud.Plugin;
+using SelUI.Modules.Alliance;
 using SelUI.Modules.CastBar;
 using SelUI.Modules.EnemyList;
 using SelUI.Modules.Nameplates;
@@ -19,18 +20,28 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Master switch. When false, no module draws.</summary>
     public bool Enabled { get; set; } = true;
 
-    /// <summary>Global default font for all text. Null = the bundled Miedinger font.</summary>
+    /// <summary>
+    ///     Global default font for all text, picked from the system font chooser. Null = use the bundled
+    ///     font named by <see cref="BundledFont" /> (Grotesk by default). A system font takes priority.
+    /// </summary>
     public SingleFontSpec? Font { get; set; }
+
+    /// <summary>Which bundled font (from Media/Fonts) to use when no system <see cref="Font" /> is picked. Null = Grotesk.</summary>
+    public string? BundledFont { get; set; }
+
+    /// <summary>Global multiplier applied to every font size. 1.0 = the baked sizes. Clamped to [0.75, 1.5] in the UI.</summary>
+    public float FontScale { get; set; } = 1f;
 
     // --- Module configs ---
     public UnitFrameConfig PlayerUnitFrame { get; set; } = UnitFrameConfig.PlayerDefault();
     public UnitFrameConfig TargetUnitFrame { get; set; } = UnitFrameConfig.TargetDefault();
     public CastBarConfig CastBar { get; set; } = new();
     public PartyFramesConfig PartyFrames { get; set; } = new();
+    public AllianceFramesConfig Alliance { get; set; } = new();
     public EnemyListConfig EnemyList { get; set; } = new();
     public NameplatesConfig Nameplates { get; set; } = new();
 
-    public int Version { get; set; } = 9;
+    public int Version { get; set; } = 10;
 
     public void Save(IDalamudPluginInterface pi)
     {

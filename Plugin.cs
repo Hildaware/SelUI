@@ -7,6 +7,7 @@ using Dalamud.Plugin.Services;
 using Dalamud.Game.ClientState.Objects.Types;
 using SelUI.Game;
 using SelUI.Modules;
+using SelUI.Modules.Alliance;
 using SelUI.Modules.CastBar;
 using SelUI.Modules.EnemyList;
 using SelUI.Modules.Nameplates;
@@ -42,6 +43,7 @@ public sealed class Plugin : IDalamudPlugin
         IGameGui gameGui,
         ITextureProvider textureProvider,
         IDataManager dataManager,
+        IAddonLifecycle addonLifecycle,
         IPluginLog log)
     {
         _pluginInterface = pluginInterface;
@@ -73,10 +75,29 @@ public sealed class Plugin : IDalamudPlugin
             config.Save(pluginInterface);
         }
 
+        // One-time default: party frame spacing widened to 64 (existing configs predate the new default).
+        if (config.Version < 10)
+        {
+            config.PartyFrames.RowHeight = 64f;
+            config.Version = 10;
+            config.Save(pluginInterface);
+        }
+
         // Row appearance for the list frames is baked design, not user config — re-apply from code on
         // every load (the module Position/spacing stays user-configurable on the parent config).
         config.PartyFrames.Row = UnitFrameConfig.PartyRowDefault();
         config.EnemyList.Row = UnitFrameConfig.EnemyRowDefault();
+
+        // The target frame's appearance is baked too; only its placement, width and hide-in-combat
+        // toggle stay user state, so re-apply the baked defaults around those on every load.
+        var bakedTarget = UnitFrameConfig.TargetDefault();
+        bakedTarget.Position = config.TargetUnitFrame.Position;
+        bakedTarget.Width = config.TargetUnitFrame.Width;
+        bakedTarget.HideInCombat = config.TargetUnitFrame.HideInCombat;
+        config.TargetUnitFrame = bakedTarget;
+
+        // The cast bar's size/look is baked; only its position (and enable toggle) stay user state.
+        config.CastBar = new CastBarConfig { Position = config.CastBar.Position, Enabled = config.CastBar.Enabled };
 
         // Status layouts are baked design, not user config — apply them from code on every load.
         config.PlayerUnitFrame.Buffs = StatusLayouts.PlayerBuffs();
@@ -90,10 +111,11 @@ public sealed class Plugin : IDalamudPlugin
 
         // Rendering foundation.
         _fontManager = new FontManager(pluginInterface);
-        var labels = new LabelRenderer(_fontManager) { GlobalFont = config.Font };
+        _fontManager.ActiveBundledFont = config.BundledFont ?? FontManager.DefaultBundledFont;
+        var labels = new LabelRenderer(_fontManager) { GlobalFont = config.Font, GlobalScale = config.FontScale };
         var bars = new BarRenderer();
         var statuses = new StatusRenderer(labels, textureProvider, objectTable);
-        var unitFrame = new UnitFrame(bars, labels, textureProvider, dataManager, statuses);
+        var unitFrame = new UnitFrame(bars, labels, textureProvider, dataManager, statuses, objectTable);
         _mouseover = new MouseoverManager();
 
         // Sample status icons for the party preview: a few real buffs and a few cleansable debuffs.
@@ -111,10 +133,12 @@ public sealed class Plugin : IDalamudPlugin
                 onRightClick: UnitInteraction.OpenContextMenu,
                 onHover: _mouseover.SetHovered,
                 inCombat: () => objectTable.LocalPlayer?.StatusFlags.HasFlag(StatusFlags.InCombat) ?? false,
-                markerProvider: FateHelper.MarkerFor),
-            new PlayerCastBar(config.CastBar, () => objectTable.LocalPlayer as IBattleChara, bars, labels, textureProvider, dataManager),
-            new PartyFrames(config.PartyFrames, partyList, objectTable, targetManager, _mouseover, unitFrame, textureProvider,
+                markerProvider: FateHelper.MarkerFor,
+                appearanceConfigurable: false),
+            new PlayerCastBar(config.CastBar, () => objectTable.LocalPlayer as IBattleChara, bars, labels, textureProvider, dataManager, gameGui, addonLifecycle),
+            new PartyFrames(config.PartyFrames, partyList, objectTable, targetManager, _mouseover, unitFrame,
                 mockBuffIcons, mockDebuffIcons),
+            new AllianceFrames(config.Alliance, partyList, unitFrame),
             new EnemyList(config.EnemyList, new EnemyListHelper(gameGui), objectTable, targetManager, _mouseover,
                 unitFrame, textureProvider, mockDebuffIcons),
             new Nameplates(config.Nameplates, objectTable, targetManager, gameGui, condition, unitFrame)
