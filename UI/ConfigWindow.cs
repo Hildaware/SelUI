@@ -17,6 +17,9 @@ namespace SelUI.UI;
 /// </summary>
 public sealed class ConfigWindow : Window
 {
+    private const float FontScaleMin = 0.75f;
+    private const float FontScaleMax = 1.5f;
+
     private readonly Configuration.Configuration _config;
     private readonly EditModeState _editState;
     private readonly FontManager _fontManager;
@@ -87,6 +90,9 @@ public sealed class ConfigWindow : Window
             {
                 using var indent = ImRaii.PushIndent();
                 using var disabled = ImRaii.Disabled(!module.Config.Enabled);
+                // Scope each module's widget IDs by name so shared labels ("Position", "Show preview")
+                // across modules don't collide into one ImGui id (which makes later ones uninteractable).
+                using var id = ImRaii.PushId(module.Name);
                 changed |= module.DrawConfig();
             }
         }
@@ -96,26 +102,73 @@ public sealed class ConfigWindow : Window
 
     private bool DrawFontPicker()
     {
-        ImGui.TextUnformatted("Font:");
-        ImGui.SameLine();
-        ImGui.TextDisabled(_config.Font != null ? FontFamilyName(_config.Font) : "Miedinger (Default)");
-        ImGui.SameLine();
+        var changed = false;
+        ImGui.TextUnformatted("Font");
 
-        if (ImGui.SmallButton("Choose...##font"))
+        // Bundled fonts (the .ttf files shipped in Media/Fonts). A picked system font overrides this.
+        var current = _config.BundledFont ?? FontManager.DefaultBundledFont;
+        var preview = _config.Font != null ? FontFamilyName(_config.Font) : PrettyFontName(current);
+        ImGui.SetNextItemWidth(220f);
+        using (var combo = ImRaii.Combo("##bundledfont", preview))
+        {
+            if (combo)
+                foreach (var name in _fontManager.BundledFontNames)
+                    if (ImGui.Selectable(PrettyFontName(name), _config.Font == null && name == current))
+                    {
+                        _config.BundledFont = name == FontManager.DefaultBundledFont ? null : name;
+                        _fontManager.ActiveBundledFont = name;
+                        _fontManager.ReleaseHandle(_config.Font);
+                        _config.Font = null;
+                        _labels.GlobalFont = null;
+                        changed = true;
+                    }
+        }
+
+        // System font chooser. When set, the chosen system font takes priority over the bundled one.
+        if (ImGui.SmallButton("Choose System Font...##font"))
         {
             _fontChooser = SingleFontChooserDialog.CreateAuto(_uiBuilder);
             if (_config.Font != null) _fontChooser.SelectedFont = _config.Font;
         }
 
-        if (_config.Font == null) return false;
+        if (_config.Font != null)
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Clear System Font##font"))
+            {
+                _fontManager.ReleaseHandle(_config.Font);
+                _config.Font = null;
+                _labels.GlobalFont = null;
+                changed = true;
+            }
+        }
 
-        ImGui.SameLine();
-        if (!ImGui.SmallButton("Reset##font")) return false;
+        // One global multiplier for all text, in place of per-element size knobs.
+        var scale = _config.FontScale;
+        ImGui.SetNextItemWidth(220f);
+        if (ImGui.SliderFloat("Font Scale##fontscale", ref scale, FontScaleMin, FontScaleMax, "%.2fx"))
+        {
+            scale = Math.Clamp(scale, FontScaleMin, FontScaleMax);
+            _config.FontScale = scale;
+            _labels.GlobalScale = scale;
+            changed = true;
+        }
 
-        _fontManager.ReleaseHandle(_config.Font);
-        _config.Font = null;
-        _labels.GlobalFont = null;
-        return true;
+        return changed;
+    }
+
+    /// <summary>"SpaceGrotesk" → "Space Grotesk"; the default is tagged so users know it's the fallback.</summary>
+    private static string PrettyFontName(string name)
+    {
+        var sb = new System.Text.StringBuilder(name.Length + 4);
+        for (var i = 0; i < name.Length; i++)
+        {
+            if (i > 0 && char.IsUpper(name[i]) && !char.IsUpper(name[i - 1])) sb.Append(' ');
+            sb.Append(name[i]);
+        }
+
+        if (name == FontManager.DefaultBundledFont) sb.Append(" (Default)");
+        return sb.ToString();
     }
 
     private bool ResolvePendingFont()

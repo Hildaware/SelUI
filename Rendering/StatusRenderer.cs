@@ -99,7 +99,7 @@ public sealed class StatusRenderer
 
         // Extra right/bottom room so the timer (larger, anchored on each icon's bottom-right corner)
         // isn't clipped by the window.
-        var overflow = cfg.FontSize + 6f;
+        var overflow = _labels.Scale(cfg.FontSize) + 6f;
         var winPos = new Vector2(minX - 4f, minY - 4f);
         var winSize = new Vector2(maxX - minX + 4f + overflow, maxY - minY + 4f + overflow);
 

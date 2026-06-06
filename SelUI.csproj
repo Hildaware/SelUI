@@ -55,7 +55,7 @@
 
     <ItemGroup>
         <Content Include=".gitignore"/>
-        <Content Include="Media\Fonts\Miedinger.ttf" CopyToOutputDirectory="PreserveNewest"/>
+        <Content Include="Media\Fonts\*.ttf" CopyToOutputDirectory="PreserveNewest"/>
         <Content Include="Media\Images\icon.png" Link="images\icon.png" CopyToOutputDirectory="PreserveNewest" Visible="false"/>
         <Content Include="SelUI.json"/>
         <Content Include="README.md"/>

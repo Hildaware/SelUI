@@ -22,6 +22,16 @@ public sealed class LabelRenderer
     /// </summary>
     public SingleFontSpec? GlobalFont { get; set; }
 
+    /// <summary>
+    ///     A global multiplier applied to every font size, so the user can scale all text at once without
+    ///     per-element knobs. 1.0 = the baked sizes. Layout code that sizes a box from a raw font-size
+    ///     value should run it through <see cref="Scale" /> so the box grows with the text.
+    /// </summary>
+    public float GlobalScale { get; set; } = 1f;
+
+    /// <summary>Apply <see cref="GlobalScale" /> to a raw font-size value used as a layout dimension.</summary>
+    public float Scale(float value) => value * GlobalScale;
+
     /// <summary>Measure <paramref name="text" /> at <paramref name="fontSize" /> px using the given (or global) font.</summary>
     public Vector2 Measure(string text, float fontSize, SingleFontSpec? font = null)
     {
@@ -31,7 +41,7 @@ public sealed class LabelRenderer
 
         using (handle.Push())
         {
-            var scale = fontSize / FontManager.AtlasBakedSize;
+            var scale = fontSize * GlobalScale / FontManager.AtlasBakedSize;
             return ImGui.CalcTextSize(text) * scale;
         }
     }
@@ -65,23 +75,24 @@ public sealed class LabelRenderer
         using (handle.Push())
         {
             var imFont = ImGui.GetFont();
-            var scale = fontSize / FontManager.AtlasBakedSize;
+            var drawSize = fontSize * GlobalScale;
+            var scale = drawSize / FontManager.AtlasBakedSize;
             var textSize = ImGui.CalcTextSize(text) * scale;
             var pos = DrawHelper.GetAnchoredPosition(anchorPos, textSize, anchor);
 
             // Drop shadow, offset 2px toward the bottom-right.
             if (shadow)
-                drawList.AddText(imFont, fontSize, pos + new Vector2(2f, 2f), shadowColor, text);
+                drawList.AddText(imFont, drawSize, pos + new Vector2(2f, 2f), shadowColor, text);
 
             if (outline)
                 for (var x = -1; x <= 1; x++)
                 for (var y = -1; y <= 1; y++)
                 {
                     if (x == 0 && y == 0) continue;
-                    drawList.AddText(imFont, fontSize, pos + new Vector2(x, y), outlineColor, text);
+                    drawList.AddText(imFont, drawSize, pos + new Vector2(x, y), outlineColor, text);
                 }
 
-            drawList.AddText(imFont, fontSize, pos, color, text);
+            drawList.AddText(imFont, drawSize, pos, color, text);
         }
     }
 }
