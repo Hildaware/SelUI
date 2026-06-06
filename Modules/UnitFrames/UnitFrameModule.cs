@@ -12,6 +12,7 @@ namespace SelUI.Modules.UnitFrames;
 public sealed class UnitFrameModule : IHudModule, IMovableModule
 {
     private readonly Func<IGameObject?> _actorProvider;
+    private readonly bool _appearanceConfigurable;
     private readonly UnitFrameConfig _config;
     private readonly UnitFrame _frame;
     private readonly Func<bool>? _inCombat;
@@ -23,7 +24,7 @@ public sealed class UnitFrameModule : IHudModule, IMovableModule
 
     public UnitFrameModule(string name, string windowId, UnitFrameConfig config, Func<IGameObject?> actorProvider, UnitFrame frame,
         Action<IGameObject>? onLeftClick = null, Action<IGameObject>? onRightClick = null, Action<IGameObject>? onHover = null,
-        Func<bool>? inCombat = null, Func<IGameObject, uint>? markerProvider = null)
+        Func<bool>? inCombat = null, Func<IGameObject, uint>? markerProvider = null, bool appearanceConfigurable = true)
     {
         Name = name;
         _windowId = windowId;
@@ -35,6 +36,7 @@ public sealed class UnitFrameModule : IHudModule, IMovableModule
         _onHover = onHover;
         _inCombat = inCombat;
         _markerProvider = markerProvider;
+        _appearanceConfigurable = appearanceConfigurable;
     }
 
     public string Name { get; }
@@ -43,7 +45,7 @@ public sealed class UnitFrameModule : IHudModule, IMovableModule
 
     public string EditLabel => Name;
     public Vector2 EditTopLeft => _config.Position;
-    public Vector2 EditSize => UnitFrame.MeasureBoxSize(_config);
+    public Vector2 EditSize => _frame.MeasureBoxSize(_config);
     public void MoveBy(Vector2 delta) => _config.Position += delta;
 
     public void Draw()
@@ -58,7 +60,33 @@ public sealed class UnitFrameModule : IHudModule, IMovableModule
 
     public bool DrawConfig()
     {
-        var changed = UnitFrameConfigUI.Draw(_config);
+        bool changed;
+        if (_appearanceConfigurable)
+        {
+            changed = UnitFrameConfigUI.Draw(_config);
+        }
+        else
+        {
+            // Appearance is baked (see UnitFrameConfig.TargetDefault + StatusLayouts.Target*); only the
+            // frame's placement and width stay user-configurable.
+            changed = false;
+
+            var pos = _config.Position;
+            ImGui.SetNextItemWidth(220f);
+            if (ImGui.DragFloat2("Position", ref pos))
+            {
+                _config.Position = pos;
+                changed = true;
+            }
+
+            var width = _config.Width;
+            ImGui.SetNextItemWidth(160f);
+            if (ImGui.DragFloat("Width", ref width, 1f, 60f, 800f, "%.0f"))
+            {
+                _config.Width = width;
+                changed = true;
+            }
+        }
 
         // "Hide in combat" is only meaningful where a combat source is wired (the target frame).
         if (_inCombat != null)

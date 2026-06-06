@@ -47,6 +47,7 @@ public static class StatusLayouts
             Position = new Vector2(240f - 24f - 4f, 28f),
             GrowRight = false,
             IconSize = 24f,
+            PerLine = 12,
             FontSize = 10f
         };
     }
@@ -63,7 +64,7 @@ public static class StatusLayouts
         return new StatusListConfig
         {
             OwnOnly = true,
-            Position = new Vector2(220f - 22f, 14f + 20f + 4f),
+            Position = new Vector2(220f - 22f, 14f + 20f + 4f + 2f),
             GrowRight = false,
             IconSize = 22f,
             FontSize = 10f
@@ -80,6 +81,7 @@ public static class StatusLayouts
             Position = new Vector2(244f, 10f - 24f / 2f),
             GrowRight = true,
             IconSize = 24f,
+            PerLine = 12,
             FontSize = 10f
         };
     }
