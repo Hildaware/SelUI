@@ -12,7 +12,7 @@ public static class NameplateLayouts
     private const float TargetScale = 1.25f; // enemy bar scales up while it's the player's target
 
     // Enemy states.
-    public static readonly UnitFrameConfig EnemyIdle = Plate();          // out of combat: name only
+    public static readonly UnitFrameConfig EnemyIdle = NameOnlyHighlighted(); // out of combat: name only, on a highlight
     public static readonly UnitFrameConfig EnemyCombat = EnemyConfig(1f, showName: false); // non-target, overworld: bars only (cut clutter)
     public static readonly UnitFrameConfig EnemyCombatNamed = EnemyConfig(1f, showName: true); // non-target, in a duty: keep the name
     public static readonly UnitFrameConfig EnemyTarget = EnemyConfig(TargetScale, showName: true); // targeted: bigger, keeps its name
@@ -45,6 +45,14 @@ public static class NameplateLayouts
             Buffs = new StatusListConfig { Enabled = false },
             Debuffs = new StatusListConfig { Enabled = false }
         };
+    }
+
+    // A name-only plate with the highlight texture behind the name (Object, NPC, idle Enemy).
+    private static UnitFrameConfig NameOnlyHighlighted()
+    {
+        var c = Plate();
+        c.NameBackground = true;
+        return c;
     }
 
     private static UnitFrameConfig EnemyConfig(float scale, bool showName)
@@ -111,10 +119,10 @@ public static class NameplateLayouts
         var minion = Plate();
         minion.TextColor = lightBlue;
         minion.TitleColor = lightBlue;
-        var npc = Plate();
+        var npc = NameOnlyHighlighted();
         npc.TextColor = Colors.FromHex("88E68C"); // light green
 
-        var obj = Plate();
+        var obj = NameOnlyHighlighted();
         obj.Enabled = false;
 
         return new Dictionary<NameplateType, UnitFrameConfig>
