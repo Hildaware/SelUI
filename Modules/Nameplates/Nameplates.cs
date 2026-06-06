@@ -19,7 +19,7 @@ namespace SelUI.Modules.Nameplates;
 /// <summary>
 ///     World nameplates. Each active native nameplate is classified by type and drawn as the per-type
 ///     baked unit frame, positioned from the game's own nameplate node. Occlusion: "Full" mode against
-///     "Walls" (hidden when behind geometry), ported from DelvUI. The player's target is always shown
+///     "Walls" (hidden when behind geometry). The player's target is always shown
 ///     (any type, ignoring occlusion), still styled by type.
 /// </summary>
 public sealed unsafe class Nameplates : IHudModule

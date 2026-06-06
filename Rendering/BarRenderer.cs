@@ -8,7 +8,7 @@ public readonly record struct BarFill(float Fraction, uint Color);
 /// <summary>
 ///     Draws SelUI's bars. The signature look, with no knobs: a rounded background, a translucent fill
 ///     that gradients from the bar color on the left to a darker shade on the right, a tight outward
-///     glow, and a crisp border in the bar's own color. Adapted from the Glow Fill work in DelvUI.
+///     glow, and a crisp border in the bar's own color.
 /// </summary>
 public sealed class BarRenderer
 {

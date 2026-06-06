@@ -1,7 +1,7 @@
 namespace SelUI.Game;
 
 /// <summary>
-///     Maps a job's ClassJob row id to a game icon id. SelUI uses DelvUI's "Style 3" set — the modern
+///     Maps a job's ClassJob row id to a game icon id. Uses the modern
 ///     colorful gradient job icons — falling back to the gold-framed set (62100 + id) for anything not
 ///     in the table.
 /// </summary>
@@ -9,7 +9,7 @@ public static class JobIcons
 {
     private const uint FramedBase = 62100;
 
-    // ClassJob row id -> colorful gradient icon id. Values match DelvUI's "Style 3" table.
+    // ClassJob row id -> colorful gradient icon id.
     private static readonly Dictionary<uint, uint> Colorful = new()
     {
         // Tanks

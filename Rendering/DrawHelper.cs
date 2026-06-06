@@ -3,7 +3,7 @@ using Dalamud.Interface.Utility.Raii;
 
 namespace SelUI.Rendering;
 
-/// <summary>The point of an element a position refers to. Mirrors DelvUI's anchor convention.</summary>
+/// <summary>The point of an element a position refers to.</summary>
 public enum DrawAnchor
 {
     Center = 0,

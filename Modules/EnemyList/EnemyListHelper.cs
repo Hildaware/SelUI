@@ -6,7 +6,7 @@ namespace SelUI.Modules.EnemyList;
 
 /// <summary>
 ///     Reads the game's enemy list (the aggro'd-enemies HUD): each entry's entity id plus its enmity
-///     level (0–4). Enmity is read off the native "_EnemyList" addon, the way DelvUI does it.
+///     level (0–4). Enmity is read off the native "_EnemyList" addon.
 /// </summary>
 public sealed unsafe class EnemyListHelper
 {
@@ -27,7 +27,7 @@ public sealed unsafe class EnemyListHelper
         var array = EnemyListNumberArray.Instance();
         if (array == null) return;
 
-        // Count isn't cleanly exposed; it lives just after the header (matches DelvUI).
+        // Count isn't cleanly exposed; it lives just after the header.
         var count = *(int*)((byte*)array + 0x04);
         if (count <= 0) return;
 

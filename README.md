@@ -2,8 +2,7 @@
 
 A streamlined, deliberately FF-flavored HUD replacement for FFXIV (Dalamud plugin).
 
-Where DelvUI gives you endless knobs, SelUI gives you a specific, opinionated look with minimal
-configuration. Features are **plug-and-play modules** you turn on and off — unit frames, party
+Features are **plug-and-play modules** you turn on and off — unit frames, party
 frames, nameplates, and so on.
 
 ## Status

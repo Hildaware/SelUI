@@ -7,12 +7,10 @@ namespace SelUI.Game;
 
 /// <summary>
 ///     Picks the health-bar color for an actor. Players are colored by job; NPCs by disposition
-///     (hostile / friendly / neutral). Job palette ported from BetterBags; NPC defaults and the
-///     hostility check follow DelvUI.
+///     (hostile / friendly / neutral). Job palette ported from BetterBags;
 /// </summary>
 public static class UnitColors
 {
-    // NPC disposition colors (DelvUI defaults).
     public static readonly uint Friendly = Colors.Rgba(99, 172, 14);
     public static readonly uint Hostile = Colors.Rgba(233, 4, 4);
     public static readonly uint Neutral = Colors.Rgba(218, 157, 46);
