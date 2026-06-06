@@ -16,6 +16,7 @@ namespace SelUI.Modules.EnemyList;
 public sealed class EnemyList : IHudModule, IMovableModule
 {
     private const float ThreatIconSize = 20f;
+    private static readonly string[] GrowthItems = ["Down", "Up"]; // index 0 = down, 1 = up (matches GrowUp)
 
     private readonly EnemyListConfig _config;
     private readonly UnitFrame _frame;
@@ -49,9 +50,17 @@ public sealed class EnemyList : IHudModule, IMovableModule
     public ModuleConfig Config => _config;
 
     public string EditLabel => Name;
-    public Vector2 EditTopLeft => _config.Position;
+
+    public Vector2 EditTopLeft => _config.GrowUp
+        ? _config.Position - new Vector2(0f, (_config.MaxRows - 1) * _config.RowHeight)
+        : _config.Position;
+
     public Vector2 EditSize => new(_config.Row.Width, _config.RowHeight * _config.MaxRows);
     public void MoveBy(Vector2 delta) => _config.Position += delta;
+
+    /// <summary>Top-left of row <paramref name="index" />, stacking up or down per config.</summary>
+    private Vector2 RowOrigin(int index) =>
+        _config.Position + new Vector2(0f, (_config.GrowUp ? -1f : 1f) * index * _config.RowHeight);
 
     public void Dispose()
     {
@@ -77,7 +86,7 @@ public sealed class EnemyList : IHudModule, IMovableModule
         for (var i = 0; i < rows; i++)
         {
             actors[i] = _objects.SearchByEntityId(enemies[i].EntityId);
-            origins[i] = _config.Position + new Vector2(0f, i * _config.RowHeight);
+            origins[i] = RowOrigin(i);
         }
 
         // Two passes so every row's debuffs sit above every row's bar (no cross-row clipping).
@@ -105,7 +114,7 @@ public sealed class EnemyList : IHudModule, IMovableModule
                 HpFraction = 1f - i * 0.1f,
                 DebuffIcons = _mockDebuffIcons
             };
-            origins[i] = _config.Position + new Vector2(0f, i * _config.RowHeight);
+            origins[i] = RowOrigin(i);
         }
 
         for (var i = 0; i < PreviewRows; i++)
@@ -133,6 +142,14 @@ public sealed class EnemyList : IHudModule, IMovableModule
         if (ImGui.DragFloat("Frame spacing", ref spacing, 0.5f, 10f, 200f, "%.0f"))
         {
             _config.RowHeight = spacing;
+            changed = true;
+        }
+
+        var grow = _config.GrowUp ? 1 : 0;
+        ImGui.SetNextItemWidth(160f);
+        if (ImGui.Combo("Growth direction", ref grow, GrowthItems, GrowthItems.Length))
+        {
+            _config.GrowUp = grow == 1;
             changed = true;
         }
 
@@ -174,9 +191,9 @@ public sealed class EnemyList : IHudModule, IMovableModule
         var uv0 = new Vector2(w * cell, 0.48f);
         var uv1 = new Vector2(w * (cell + 1), 0.48f + h);
 
-        // Centered on the bar's left edge, vertically centered on the bar (header 14 + bar 20 => 24).
+        // Centered on the bar's left edge, vertically centered on the bar (header 14 + bar 20 => 24), +2 down.
         var size = new Vector2(ThreatIconSize);
-        var pos = origin + new Vector2(0f, 24f) - size / 2f;
+        var pos = origin + new Vector2(0f, 26f) - size / 2f;
 
         // Foreground draw list so it always sits above the health bar.
         ImGui.GetForegroundDrawList().AddImage(wrap.Handle, pos, pos + size, uv0, uv1);
