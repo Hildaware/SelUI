@@ -11,6 +11,6 @@ public sealed class CastBarConfig : ModuleConfig
     public Vector2 Position { get; set; } = new(760f, 680f);
 
     public float Width { get; set; } = 280f;
-    public float BarHeight { get; set; } = 22f;
-    public float NameFontSize { get; set; } = 18f;
+    public float BarHeight { get; set; } = 20f;
+    public float NameFontSize { get; set; } = 20f;
 }

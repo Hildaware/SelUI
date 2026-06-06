@@ -1,8 +1,11 @@
 using Dalamud.Bindings.ImGui;
+using Dalamud.Game.Addon.Lifecycle;
+using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Interface.Textures;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel;
 using SelUI.Rendering;
 using LuminaAction = Lumina.Excel.Sheets.Action;
@@ -17,21 +20,32 @@ namespace SelUI.Modules.CastBar;
 ///     icon docked to the left — a square sized to span the name + bar block. Interruptible casts use a
 ///     red fill. The bar fades in/out and lingers briefly on completion.
 /// </summary>
-public sealed class PlayerCastBar : IHudModule, IMovableModule
+public sealed unsafe class PlayerCastBar : IHudModule, IMovableModule
 {
     private const float FadeDuration = 0.15f;     // seconds to fade fully in or out
     private const float Margin = 12f;             // glow-bloom breathing room around the content
+    private const float IconOffsetX = 4f;         // baked nudge of the spell icon further left of the bar
     private static readonly uint CastColor = Colors.FromHex("D9A441");
     private static readonly uint InterruptColor = Colors.FromHex("E05A5A");
 
+    private const string NativeCastBar = "_CastBar"; // the game's own cast bar addon
+    private static readonly Vector2 OffScreen = new(-9999f, -9999f);
+
     private readonly Func<IBattleChara?> _actorProvider;
+    private readonly IAddonLifecycle _addonLifecycle;
     private readonly BarRenderer _bars;
     private readonly CastBarConfig _config;
     private readonly IDataManager _data;
+    private readonly IGameGui _gameGui;
     private readonly Dictionary<uint, ISharedImmediateTexture> _iconCache = new();
     private readonly LabelRenderer _labels;
     private readonly ITextureProvider _textures;
     private ExcelSheet<LuminaAction>? _actionSheet;
+
+    // The native cast bar is moved off-screen (rather than toggled) while our module is enabled; we
+    // remember its real position so we can put it back when we stop hiding it.
+    private bool _nativeHidden;
+    private Vector2 _nativeCastBarPos;
 
     // Last live cast, snapshotted so the bar can keep rendering through its fade-out.
     private float _alpha;
@@ -42,7 +56,7 @@ public sealed class PlayerCastBar : IHudModule, IMovableModule
     private bool _interruptible;
 
     public PlayerCastBar(CastBarConfig config, Func<IBattleChara?> actorProvider, BarRenderer bars, LabelRenderer labels,
-        ITextureProvider textures, IDataManager data)
+        ITextureProvider textures, IDataManager data, IGameGui gameGui, IAddonLifecycle addonLifecycle)
     {
         _config = config;
         _actorProvider = actorProvider;
@@ -50,6 +64,12 @@ public sealed class PlayerCastBar : IHudModule, IMovableModule
         _labels = labels;
         _textures = textures;
         _data = data;
+        _gameGui = gameGui;
+        _addonLifecycle = addonLifecycle;
+
+        // Hook the native cast bar's PreDraw and shove its root node off-screen every
+        // frame, so it never fights us re-asserting its position. Restored on disable / unload.
+        _addonLifecycle.RegisterListener(AddonEvent.PreDraw, NativeCastBar, OnNativeCastBarPreDraw);
     }
 
     public string Name => "Player Cast Bar";
@@ -60,15 +80,19 @@ public sealed class PlayerCastBar : IHudModule, IMovableModule
 
     // The visual block extends left of Position (the icon) and above it (the name row); mirror the
     // layout math in Draw so the box matches the rendered cast bar.
-    public Vector2 EditTopLeft => _config.Position - new Vector2(_config.NameFontSize + _config.BarHeight, _config.NameFontSize);
+    public Vector2 EditTopLeft =>
+        _config.Position - new Vector2(_labels.Scale(_config.NameFontSize) + _config.BarHeight + IconOffsetX, _labels.Scale(_config.NameFontSize));
 
     public Vector2 EditSize =>
-        new(_config.NameFontSize + _config.BarHeight + _config.Width, _config.BarHeight + _config.NameFontSize);
+        new(_labels.Scale(_config.NameFontSize) + _config.BarHeight + IconOffsetX + _config.Width,
+            _config.BarHeight + _labels.Scale(_config.NameFontSize));
 
     public void MoveBy(Vector2 delta) => _config.Position += delta;
 
     public void Dispose()
     {
+        _addonLifecycle.UnregisterListener(AddonEvent.PreDraw, NativeCastBar, OnNativeCastBarPreDraw);
+        RestoreNativeCastBar();
     }
 
     public void Draw()
@@ -94,14 +118,14 @@ public sealed class PlayerCastBar : IHudModule, IMovableModule
         var cfg = _config;
         var (name, iconId) = CastAction(_castActionId, _castActionType);
 
-        var nameH = cfg.NameFontSize;
+        var nameH = _labels.Scale(cfg.NameFontSize); // the name row's height, scaled with the font
         var iconSize = nameH + cfg.BarHeight; // square, spanning the name row + the bar
         var barPos = cfg.Position;
 
         // Window bounds: icon (left of the bar), the name row (above), the bar, plus glow margin. The
         // name can be wider than the bar, so extend the right edge to fit it.
-        var nameWidth = _labels.Measure(name, nameH).X;
-        var left = barPos.X - iconSize;
+        var nameWidth = _labels.Measure(name, cfg.NameFontSize).X;
+        var left = barPos.X - iconSize - IconOffsetX;
         var top = barPos.Y - nameH;
         var right = barPos.X + MathF.Max(cfg.Width, nameWidth);
         var bottom = barPos.Y + cfg.BarHeight;
@@ -131,7 +155,7 @@ public sealed class PlayerCastBar : IHudModule, IMovableModule
             if (iconId != 0)
             {
                 var wrap = GetIcon(iconId).GetWrapOrEmpty();
-                var iconTopLeft = new Vector2(barPos.X - iconSize, barPos.Y - nameH);
+                var iconTopLeft = new Vector2(barPos.X - iconSize - IconOffsetX, barPos.Y - nameH);
                 dl.AddImage(wrap.Handle, iconTopLeft, iconTopLeft + new Vector2(iconSize),
                     Vector2.Zero, Vector2.One, Colors.MultiplyAlpha(0xFFFFFFFFu, _alpha));
             }
@@ -149,28 +173,48 @@ public sealed class PlayerCastBar : IHudModule, IMovableModule
             changed = true;
         }
 
-        var width = _config.Width;
-        if (ImGui.DragFloat("Width", ref width, 0.5f, 40f, 800f, "%.0f"))
-        {
-            _config.Width = width;
-            changed = true;
-        }
-
-        var height = _config.BarHeight;
-        if (ImGui.DragFloat("Bar height", ref height, 0.5f, 4f, 80f, "%.0f"))
-        {
-            _config.BarHeight = height;
-            changed = true;
-        }
-
-        var nameSize = _config.NameFontSize;
-        if (ImGui.DragFloat("Name size", ref nameSize, 0.5f, 8f, 48f, "%.0f"))
-        {
-            _config.NameFontSize = nameSize;
-            changed = true;
-        }
+        // Width, bar height and name size are baked (see CastBarConfig + the load-time re-apply in Plugin).
 
         return changed;
+    }
+
+    /// <summary>
+    ///     PreDraw hook on the game's own cast bar. While our module is enabled we move the addon's root
+    ///     node off-screen (saving its real position first); when disabled we put it back. Runs every
+    ///     frame the addon draws, so the game can't reclaim its spot mid-cast.
+    /// </summary>
+    private void OnNativeCastBarPreDraw(AddonEvent type, AddonArgs args)
+    {
+        var addon = (AtkUnitBase*)args.Addon.Address;
+        if (addon == null || addon->RootNode == null) return;
+        var node = addon->RootNode;
+
+        if (_config.Enabled)
+        {
+            if (!_nativeHidden)
+            {
+                _nativeCastBarPos = new Vector2(node->GetXFloat(), node->GetYFloat());
+                _nativeHidden = true;
+            }
+
+            node->SetPositionFloat(OffScreen.X, OffScreen.Y);
+        }
+        else if (_nativeHidden)
+        {
+            node->SetPositionFloat(_nativeCastBarPos.X, _nativeCastBarPos.Y);
+            _nativeHidden = false;
+        }
+    }
+
+    /// <summary>Put the native cast bar back where it was, if we'd moved it. Used on unload.</summary>
+    private void RestoreNativeCastBar()
+    {
+        if (!_nativeHidden) return;
+
+        var addon = (AtkUnitBase*)_gameGui.GetAddonByName(NativeCastBar, 1).Address;
+        if (addon != null && addon->RootNode != null)
+            addon->RootNode->SetPositionFloat(_nativeCastBarPos.X, _nativeCastBarPos.Y);
+        _nativeHidden = false;
     }
 
     /// <summary>
