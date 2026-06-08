@@ -64,6 +64,10 @@ public static class Colors
 
     /// <summary>Absorb-shield overlay on health bars: a bright, glowy blue.</summary>
     public static readonly uint ShieldBar = FromHex("66D9FF");
+
+    /// <summary>Cast bar fill — a warm gold — and its interruptible (red) variant.</summary>
+    public static readonly uint Cast = FromHex("D9A441");
+    public static readonly uint CastInterruptible = FromHex("E05A5A");
     public static readonly uint BarBackground = Rgba(0, 0, 0, 0xB4);
     public static readonly uint BarBorder = Rgba(0, 0, 0, 0xFF);
 }

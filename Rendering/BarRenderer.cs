@@ -53,9 +53,9 @@ public sealed class BarRenderer
     {
         // Background is a very dark version of the bar's own color for strong contrast (falls back to
         // the passed color only when there's no fill to derive from).
-        var bg = fills.Length > 0 ? ApplyAlpha(Darken(fills[0].Color, BgDarken), BgOpacity) : backgroundColor;
+        var bg = fills.Length > 0 ? Colors.MultiplyAlpha(Darken(fills[0].Color, BgDarken), BgOpacity) : backgroundColor;
         var rounding = ScaledRounding;
-        drawList.AddRectFilled(pos, pos + size, ApplyAlpha(bg, alpha), rounding);
+        drawList.AddRectFilled(pos, pos + size, Colors.MultiplyAlpha(bg, alpha), rounding);
 
         foreach (var fill in fills)
         {
@@ -64,14 +64,14 @@ public sealed class BarRenderer
 
             var (fillPos, fillSize) = FillRect(pos, size, frac, direction);
             var fillEnd = fillPos + fillSize;
-            var baseColor = ApplyAlpha(fill.Color, alpha);
+            var baseColor = Colors.MultiplyAlpha(fill.Color, alpha);
 
             // Gradient anchored to a *full* bar: the right end darkens to DarkenFactor at 100%, and the
             // visible fill samples that gradient at `frac`. So a given pixel keeps its color as the bar
             // fills/unfills — the darken doesn't ride the moving fill front.
             var fullRight = Darken(baseColor, DarkenFactor);
-            var left = ApplyAlpha(baseColor, FillOpacity);
-            var right = ApplyAlpha(LerpColor(baseColor, fullRight, frac), FillOpacity);
+            var left = Colors.MultiplyAlpha(baseColor, FillOpacity);
+            var right = Colors.MultiplyAlpha(LerpColor(baseColor, fullRight, frac), FillOpacity);
 
             // The fill starts at the bar's edge (round that cap) and its leading edge is always rounded.
             var leftAligned = MathF.Abs(fillPos.X - pos.X) < 0.5f;
@@ -81,13 +81,13 @@ public sealed class BarRenderer
         // Soft border flare, in the bar's own color, under the crisp border.
         var glowBase = fills.Length > 0 ? OpaqueColor(fills[0].Color) : borderColor;
         if (glowBase != 0)
-            DrawBorderGlow(drawList, pos, size, ApplyAlpha(glowBase, alpha));
+            DrawBorderGlow(drawList, pos, size, Colors.MultiplyAlpha(glowBase, alpha));
 
         // Border: explicit override (e.g. a selection highlight) wins, otherwise it matches the bar's
         // own color. Drawn crisp over the translucent fill.
         var border = borderOverride != 0 ? borderOverride : fills.Length > 0 ? OpaqueColor(fills[0].Color) : borderColor;
         if (border != 0 && borderThickness > 0f)
-            drawList.AddRect(pos, pos + size, ApplyAlpha(border, alpha), rounding, ImDrawFlags.None, borderThickness * _scale.Value);
+            drawList.AddRect(pos, pos + size, Colors.MultiplyAlpha(border, alpha), rounding, ImDrawFlags.None, borderThickness * _scale.Value);
     }
 
     /// <summary>Convenience overload for the common single-fill bar.</summary>
@@ -123,11 +123,11 @@ public sealed class BarRenderer
 
         var fillPos = new Vector2(pos.X + size.X * startFrac, pos.Y);
         var fillEnd = new Vector2(pos.X + size.X * endFrac, pos.Y + size.Y);
-        var baseColor = ApplyAlpha(color, alpha);
+        var baseColor = Colors.MultiplyAlpha(color, alpha);
 
         var fullDark = Darken(baseColor, DarkenFactor);
-        var left = ApplyAlpha(LerpColor(baseColor, fullDark, startFrac), FillOpacity);
-        var right = ApplyAlpha(LerpColor(baseColor, fullDark, endFrac), FillOpacity);
+        var left = Colors.MultiplyAlpha(LerpColor(baseColor, fullDark, startFrac), FillOpacity);
+        var right = Colors.MultiplyAlpha(LerpColor(baseColor, fullDark, endFrac), FillOpacity);
 
         var leftAligned = MathF.Abs(fillPos.X - pos.X) < 0.5f;
         var rightAligned = MathF.Abs(fillEnd.X - (pos.X + size.X)) < 0.5f;
@@ -150,7 +150,7 @@ public sealed class BarRenderer
             var t = (float)pass / BorderGlowPasses;
             var expand = reach * t;
             var alphaFactor = BorderGlowIntensity * MathF.Exp(-t * BorderGlowDecay);
-            var ringColor = ApplyAlpha(baseColor, alphaFactor);
+            var ringColor = Colors.MultiplyAlpha(baseColor, alphaFactor);
 
             drawList.AddRect(
                 new Vector2(pos.X - expand, pos.Y - expand),
@@ -196,12 +196,6 @@ public sealed class BarRenderer
         var midMin = new Vector2(fillPos.X + leftInset, fillPos.Y);
         var midMax = new Vector2(fillEnd.X - rightInset, fillEnd.Y);
         drawList.AddRectFilledMultiColor(midMin, midMax, left, right, right, left);
-    }
-
-    private static uint ApplyAlpha(uint color, float factor)
-    {
-        var alpha = (uint)MathF.Round(((color >> 24) & 0xFF) * Math.Clamp(factor, 0f, 1f));
-        return (color & 0x00FFFFFF) | (Math.Min(alpha, 255u) << 24);
     }
 
     private static uint OpaqueColor(uint color)

@@ -52,7 +52,7 @@ public sealed class UnitFrame
 
     private readonly BarRenderer _bars;
     private readonly IDataManager _data;
-    private readonly Dictionary<uint, ISharedImmediateTexture> _iconCache = new();
+    private readonly IconCache _icons;
     private readonly LabelRenderer _labels;
     private readonly IObjectTable _objects;
     private readonly RenderScale _scale;
@@ -67,6 +67,7 @@ public sealed class UnitFrame
         _bars = bars;
         _labels = labels;
         _textures = textures;
+        _icons = new IconCache(textures);
         _data = data;
         _statuses = statuses;
         _objects = objects;
@@ -101,6 +102,20 @@ public sealed class UnitFrame
     }
 
     /// <summary>
+    ///     The header row's height: the taller of the level text and an above-the-bar name (the name
+    ///     unless it sits beside the icon), or zero when neither shows. Shared by the measure helpers and
+    ///     <see cref="Draw" /> so they stay in lockstep. Expects an already-<see cref="ScaleGeometry" />'d cfg.
+    /// </summary>
+    private float HeaderHeight(UnitFrameConfig cfg)
+    {
+        var nameAboveBar = cfg.ShowName && !cfg.NameRightOfIcon;
+        var headerH = 0f;
+        if (cfg.ShowLevel) headerH = MathF.Max(headerH, _labels.Scale(cfg.LevelFontSize));
+        if (nameAboveBar) headerH = MathF.Max(headerH, _labels.Scale(cfg.NameFontSize));
+        return headerH;
+    }
+
+    /// <summary>
     ///     The bars' footprint for a config, computed from the same vertical-layout rules as
     ///     <see cref="Draw" /> but driven by config flags rather than a live snapshot (used by edit mode,
     ///     where there's no actor). Mana/cast count only when they stack below the health bar; overlapping
@@ -109,10 +124,7 @@ public sealed class UnitFrame
     public Vector2 MeasureBoxSize(UnitFrameConfig cfg)
     {
         cfg = ScaleGeometry(cfg);
-        var nameAboveBar = cfg.ShowName && !cfg.NameRightOfIcon;
-        var headerH = 0f;
-        if (cfg.ShowLevel) headerH = MathF.Max(headerH, _labels.Scale(cfg.LevelFontSize));
-        if (nameAboveBar) headerH = MathF.Max(headerH, _labels.Scale(cfg.NameFontSize));
+        var headerH = HeaderHeight(cfg);
 
         var hpH = cfg.ShowHealthBar ? cfg.HealthBarHeight : 0f;
         var mpH = cfg.ShowManaBar && !cfg.ManaOverlapHealth ? cfg.ManaBarHeight : 0f;
@@ -134,10 +146,7 @@ public sealed class UnitFrame
     public float HealthBarCenterY(UnitFrameConfig cfg)
     {
         cfg = ScaleGeometry(cfg);
-        var nameAboveBar = cfg.ShowName && !cfg.NameRightOfIcon;
-        var headerH = 0f;
-        if (cfg.ShowLevel) headerH = MathF.Max(headerH, _labels.Scale(cfg.LevelFontSize));
-        if (nameAboveBar) headerH = MathF.Max(headerH, _labels.Scale(cfg.NameFontSize));
+        var headerH = HeaderHeight(cfg);
 
         var hpH = cfg.ShowHealthBar ? cfg.HealthBarHeight : 0f;
         return headerH + hpH / 2f; // hpY == headerH in Draw's layout
@@ -227,10 +236,7 @@ public sealed class UnitFrame
         // placed beside the icon) reserves a header row. The job icon and an overlapping mana bar are
         // positioned relative to the health bar.
         var fs = cfg.FontSize;
-        var nameAboveBar = cfg.ShowName && !cfg.NameRightOfIcon;
-        var headerH = 0f;
-        if (cfg.ShowLevel) headerH = MathF.Max(headerH, _labels.Scale(cfg.LevelFontSize));
-        if (nameAboveBar) headerH = MathF.Max(headerH, _labels.Scale(cfg.NameFontSize));
+        var headerH = HeaderHeight(cfg);
 
         var hpH = cfg.ShowHealthBar ? cfg.HealthBarHeight : 0f;
         var mpH = snap.ShowMana ? cfg.ManaBarHeight : 0f;
@@ -510,7 +516,7 @@ public sealed class UnitFrame
             if (iconShown)
             {
                 var iconId = snap.IconOverride != 0 ? snap.IconOverride : JobIcons.Colored(snap.JobId);
-                var wrap = GetIcon(iconId).GetWrapOrEmpty();
+                var wrap = _icons.Get(iconId).GetWrapOrEmpty();
                 dl.AddImage(wrap.Handle, iconTopLeft, iconTopLeft + new Vector2(cfg.JobIconSize),
                     Vector2.Zero, Vector2.One, Colors.MultiplyAlpha(0xFFFFFFFFu, alpha));
             }
@@ -518,7 +524,7 @@ public sealed class UnitFrame
             // Marker badge, on top, centered above the frame.
             if (hasMarker)
             {
-                var wrap = GetIcon(markerIcon).GetWrapOrEmpty();
+                var wrap = _icons.Get(markerIcon).GetWrapOrEmpty();
                 var tl = markerCenter - new Vector2(markerSize / 2f);
                 dl.AddImage(wrap.Handle, tl, tl + new Vector2(markerSize), Vector2.Zero, Vector2.One,
                     Colors.MultiplyAlpha(0xFFFFFFFFu, alpha));
@@ -527,7 +533,7 @@ public sealed class UnitFrame
             // Leader crown, drawn last so it sits above the bars and job icon.
             if (hasLeader)
             {
-                var wrap = GetIcon(LeaderIconId).GetWrapOrEmpty();
+                var wrap = _icons.Get(LeaderIconId).GetWrapOrEmpty();
                 dl.AddImage(wrap.Handle, leaderTopLeft, leaderTopLeft + new Vector2(leaderIconSize),
                     Vector2.Zero, Vector2.One, Colors.MultiplyAlpha(0xFFFFFFFFu, alpha));
             }
@@ -538,7 +544,7 @@ public sealed class UnitFrame
                 var rcSize = hpH * 1.3f;
                 var center = new Vector2(origin.X + cfg.Width / 2f, origin.Y + hpY + hpH / 2f);
                 var tl = center - new Vector2(rcSize / 2f);
-                var wrap = GetIcon(readyCheckIcon).GetWrapOrEmpty();
+                var wrap = _icons.Get(readyCheckIcon).GetWrapOrEmpty();
                 dl.AddImage(wrap.Handle, tl, tl + new Vector2(rcSize), Vector2.Zero, Vector2.One,
                     Colors.MultiplyAlpha(0xFFFFFFFFu, alpha));
             }
@@ -631,14 +637,6 @@ public sealed class UnitFrame
             HealthTextMode.ValueAndPercent => $"{current}  ({pct}%)",
             _ => string.Empty
         };
-    }
-
-    private ISharedImmediateTexture GetIcon(uint iconId)
-    {
-        if (_iconCache.TryGetValue(iconId, out var tex)) return tex;
-        tex = _textures.GetFromGameIcon(new GameIconLookup(iconId));
-        _iconCache[iconId] = tex;
-        return tex;
     }
 
     /// <summary>

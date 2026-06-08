@@ -16,7 +16,6 @@ namespace SelUI.Modules.EnemyList;
 public sealed class EnemyList : IHudModule, IMovableModule
 {
     private const float ThreatIconSize = 20f;
-    private static readonly string[] GrowthItems = ["Down", "Up"]; // index 0 = down, 1 = up (matches GrowUp)
 
     private readonly EnemyListConfig _config;
     private readonly UnitFrame _frame;
@@ -29,6 +28,10 @@ public sealed class EnemyList : IHudModule, IMovableModule
     private readonly Action<IGameObject> _onHover;
     private readonly Action<IGameObject> _onLeftClick;
     private readonly Action<IGameObject> _onRightClick;
+
+    // Reused each frame so the per-row actor/origin lookups don't allocate (rows are bounded by MaxRows).
+    private readonly List<IGameObject?> _actors = new();
+    private readonly List<Vector2> _origins = new();
     private ISharedImmediateTexture? _threatTexture;
 
     public EnemyList(EnemyListConfig config, EnemyListHelper helper, IObjectTable objects, ITargetManager targets,
@@ -64,8 +67,7 @@ public sealed class EnemyList : IHudModule, IMovableModule
     private float RowPitch => _config.RowHeight * _scale.Value;
 
     /// <summary>Top-left of row <paramref name="index" />, stacking up or down per config.</summary>
-    private Vector2 RowOrigin(int index) =>
-        _config.Position + new Vector2(0f, (_config.GrowUp ? -1f : 1f) * index * RowPitch);
+    private Vector2 RowOrigin(int index) => ListLayout.RowOrigin(_config.Position, _config.GrowUp, RowPitch, index);
 
     public void Dispose()
     {
@@ -86,24 +88,24 @@ public sealed class EnemyList : IHudModule, IMovableModule
         var rows = Math.Min(enemies.Count, _config.MaxRows);
         if (rows == 0) return;
 
-        var actors = new IGameObject?[rows];
-        var origins = new Vector2[rows];
+        _actors.Clear();
+        _origins.Clear();
         for (var i = 0; i < rows; i++)
         {
-            actors[i] = _objects.SearchByEntityId(enemies[i].EntityId);
-            origins[i] = RowOrigin(i);
+            _actors.Add(_objects.SearchByEntityId(enemies[i].EntityId));
+            _origins.Add(RowOrigin(i));
         }
 
         // Two passes so every row's debuffs sit above every row's bar (no cross-row clipping).
         for (var i = 0; i < rows; i++)
-            _frame.Draw($"SelUI_Enemy{i}", _config.Row, actors[i], origins[i], IsSelected(actors[i]),
+            _frame.Draw($"SelUI_Enemy{i}", _config.Row, _actors[i], _origins[i], ActorState.IsSelected(_targets, _actors[i]),
                 _onLeftClick, _onRightClick, _onHover, drawStatuses: false);
 
         for (var i = 0; i < rows; i++)
-            _frame.DrawStatuses($"SelUI_Enemy{i}", _config.Row, actors[i], origins[i]);
+            _frame.DrawStatuses($"SelUI_Enemy{i}", _config.Row, _actors[i], _origins[i]);
 
         for (var i = 0; i < rows; i++)
-            DrawThreatIcon(origins[i], enemies[i].Enmity);
+            DrawThreatIcon(_origins[i], enemies[i].Enmity);
     }
 
     private void DrawPreview()
@@ -152,7 +154,7 @@ public sealed class EnemyList : IHudModule, IMovableModule
 
         var grow = _config.GrowUp ? 1 : 0;
         ImGui.SetNextItemWidth(160f);
-        if (ImGui.Combo("Growth direction", ref grow, GrowthItems, GrowthItems.Length))
+        if (ImGui.Combo("Growth direction", ref grow, ListLayout.GrowthItems, ListLayout.GrowthItems.Length))
         {
             _config.GrowUp = grow == 1;
             changed = true;
@@ -172,13 +174,6 @@ public sealed class EnemyList : IHudModule, IMovableModule
         }
 
         return changed;
-    }
-
-    private bool IsSelected(IGameObject? actor)
-    {
-        if (actor == null) return false;
-        return (_targets.Target != null && _targets.Target.Address == actor.Address)
-               || (_targets.SoftTarget != null && _targets.SoftTarget.Address == actor.Address);
     }
 
     private void DrawThreatIcon(Vector2 origin, int enmity)

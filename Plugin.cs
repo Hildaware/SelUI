@@ -1,5 +1,4 @@
 using System.Linq;
-using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
@@ -109,7 +108,7 @@ public sealed class Plugin : IDalamudPlugin
                 onLeftClick: actor => targetManager.Target = actor,
                 onRightClick: UnitInteraction.OpenContextMenu,
                 onHover: _mouseover.SetHovered,
-                inCombat: () => objectTable.LocalPlayer?.StatusFlags.HasFlag(StatusFlags.InCombat) ?? false,
+                inCombat: () => ActorState.InCombat(objectTable.LocalPlayer),
                 markerProvider: FateHelper.MarkerFor,
                 appearanceConfigurable: false),
             new PlayerCastBar(config.CastBar, () => objectTable.LocalPlayer as IBattleChara, bars, labels, textureProvider, dataManager, gameGui, addonLifecycle, _renderScale),

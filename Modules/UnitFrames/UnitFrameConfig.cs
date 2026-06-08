@@ -78,8 +78,8 @@ public sealed class UnitFrameConfig : ModuleConfig
     /// <summary>Cast bar width as a fraction of the frame width when <see cref="CastOverlapHealth" /> is set.</summary>
     public float CastWidthFactor { get; set; } = 1f;
 
-    public uint CastColor { get; set; } = Colors.FromHex("D9A441");
-    public uint CastInterruptibleColor { get; set; } = Colors.FromHex("E05A5A");
+    public uint CastColor { get; set; } = Colors.Cast;
+    public uint CastInterruptibleColor { get; set; } = Colors.CastInterruptible;
 
     // Name / level
     public bool ShowName { get; set; } = true;

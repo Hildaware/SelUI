@@ -18,7 +18,6 @@ public sealed class PartyFrames : IHudModule, IMovableModule
     // Leader crown — baked appearance (drawn on top by UnitFrame, see UnitFrameConfig leader params).
     private const float LeaderIconSize = 20f;
     private static readonly Vector2 LeaderIconOffset = new(-8f, 8f);
-    private static readonly string[] GrowthItems = ["Down", "Up"]; // index 0 = down, 1 = up (matches GrowUp)
 
     private readonly PartyFramesConfig _config;
     private readonly UnitFrame _frame;
@@ -70,8 +69,7 @@ public sealed class PartyFrames : IHudModule, IMovableModule
     private float RowPitch => _config.RowHeight * _scale.Value;
 
     /// <summary>Top-left of row <paramref name="index" />, stacking up or down per config.</summary>
-    private Vector2 RowOrigin(int index) =>
-        _config.Position + new Vector2(0f, (_config.GrowUp ? -1f : 1f) * index * RowPitch);
+    private Vector2 RowOrigin(int index) => ListLayout.RowOrigin(_config.Position, _config.GrowUp, RowPitch, index);
 
     public void Dispose()
     {
@@ -217,7 +215,7 @@ public sealed class PartyFrames : IHudModule, IMovableModule
 
         var grow = _config.GrowUp ? 1 : 0;
         ImGui.SetNextItemWidth(160f);
-        if (ImGui.Combo("Growth direction", ref grow, GrowthItems, GrowthItems.Length))
+        if (ImGui.Combo("Growth direction", ref grow, ListLayout.GrowthItems, ListLayout.GrowthItems.Length))
         {
             _config.GrowUp = grow == 1;
             changed = true;
@@ -246,16 +244,8 @@ public sealed class PartyFrames : IHudModule, IMovableModule
     private void DrawRow(int index, IGameObject? actor, bool isLeader, uint colorOverride = 0, uint iconOverride = 0, uint readyCheckIcon = 0)
     {
         var origin = RowOrigin(index);
-        _frame.Draw($"SelUI_Party{index}", _config.Row, actor, origin, IsSelected(actor), _onLeftClick, _onRightClick, _onHover,
+        _frame.Draw($"SelUI_Party{index}", _config.Row, actor, origin, ActorState.IsSelected(_targets, actor), _onLeftClick, _onRightClick, _onHover,
             leader: isLeader, leaderIconSize: LeaderIconSize * _scale.Value, leaderIconOffset: LeaderIconOffset * _scale.Value,
             colorOverride: colorOverride, iconOverride: iconOverride, readyCheckIcon: readyCheckIcon);
-    }
-
-    /// <summary>Whether this actor is the player's current target (hard or gamepad soft target).</summary>
-    private bool IsSelected(IGameObject? actor)
-    {
-        if (actor == null) return false;
-        return (_targets.Target != null && _targets.Target.Address == actor.Address)
-               || (_targets.SoftTarget != null && _targets.SoftTarget.Address == actor.Address);
     }
 }

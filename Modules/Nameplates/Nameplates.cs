@@ -1,4 +1,3 @@
-using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
 using Dalamud.Bindings.ImGui;
@@ -55,6 +54,7 @@ public sealed unsafe class Nameplates : IHudModule
     private readonly Dictionary<ulong, float> _headHeights = new();
     private readonly HashSet<ulong> _seenHeights = new();
     private readonly List<ulong> _pruneScratch = new();
+    private readonly List<PlateDraw> _plates = new(); // reused each frame; cleared at the top of Draw
 
     public Nameplates(NameplatesConfig config, IObjectTable objects, ITargetManager targets, IGameGui gameGui, ICondition condition, UnitFrame frame, RenderScale scale)
     {
@@ -94,7 +94,7 @@ public sealed unsafe class Nameplates : IHudModule
         var player = _objects.LocalPlayer;
         var self = player?.GameObjectId ?? 0;
         var playerPos = player?.Position;
-        var playerInCombat = player != null && InCombat(player);
+        var playerInCombat = player != null && ActorState.InCombat(player);
         var target = _targets.Target;
         var targetId = target?.GameObjectId ?? 0;
         var foundTarget = false;
@@ -104,7 +104,8 @@ public sealed unsafe class Nameplates : IHudModule
         var currentFate = FateHelper.CurrentFateId();
 
         var count = ui3d->NamePlateObjectInfoCount;
-        var plates = new List<PlateDraw>(count);
+        _plates.Clear();
+        var plates = _plates;
         _seenHeights.Clear();
         for (var i = 0; i < count; i++)
         {
@@ -142,7 +143,7 @@ public sealed unsafe class Nameplates : IHudModule
             // name-only plate with no purpose is clutter. Kept in duties, in our FATE, or when it's a
             // marked quest/important enemy.
             if (!isTarget && type == NameplateType.Enemy && !inMyFate && !importantShow && !InDuty()
-                && !(playerInCombat && InCombat(go)))
+                && !(playerInCombat && ActorState.InCombat(go)))
                 continue;
 
             // The game's nameplate node gives a correct (model-bounds) position, but its 2D screen coords
@@ -169,19 +170,19 @@ public sealed unsafe class Nameplates : IHudModule
             // The target is always shown and ignores occlusion.
             if (!isTarget)
             {
-                var distance = Vector3.Distance(cameraPos, new Vector3(go.Position.X, go.Position.Y, go.Position.Z));
+                var distance = Vector3.Distance(cameraPos, go.Position);
                 if (IsOccluded(ref camera, collision, screen, distance)) continue;
             }
 
             // Player-to-actor distance, used both for the fade/scale curves and for depth-sorting.
             var dist = playerPos is { } pp
-                ? Vector3.Distance(pp, new Vector3(go.Position.X, go.Position.Y, go.Position.Z))
+                ? Vector3.Distance(pp, go.Position)
                 : 0f;
 
             var alphaMul = 1f;
 
             // Non-targeted enemies in combat are dimmed so the target reads clearly.
-            if (!isTarget && type == NameplateType.Enemy && playerInCombat && InCombat(go)) alphaMul = EnemyOffTargetAlpha;
+            if (!isTarget && type == NameplateType.Enemy && playerInCombat && ActorState.InCombat(go)) alphaMul = EnemyOffTargetAlpha;
 
             // Distance fade / scale: everything except the target dims and shrinks with distance.
             if (!isTarget && playerPos != null)
@@ -225,7 +226,7 @@ public sealed unsafe class Nameplates : IHudModule
                     var type = NameplateClassifier.Classify(target);
                     var (title, titleAbove) = TitleFor(target, type, atk, -1);
                     var dist = playerPos is { } pp
-                        ? Vector3.Distance(pp, new Vector3(target.Position.X, target.Position.Y, target.Position.Z))
+                        ? Vector3.Distance(pp, target.Position)
                         : 0f;
                     var markerIcon = type == NameplateType.Enemy ? FateHelper.MarkerFor(target) : 0u;
                     plates.Add(new PlateDraw(target, ConfigFor(target, type, playerInCombat), screen, title, titleAbove, 1f, dist, true, markerIcon));
@@ -320,25 +321,20 @@ public sealed unsafe class Nameplates : IHudModule
     private UnitFrameConfig ConfigFor(IGameObject go, NameplateType type, bool playerInCombat)
     {
         // Party members optionally swap to an enlarged centered job icon while in combat.
-        if (type == NameplateType.PartyMember && _config.PartyJobIconInCombat && InCombat(go))
+        if (type == NameplateType.PartyMember && _config.PartyJobIconInCombat && ActorState.InCombat(go))
             return NameplateLayouts.PartyCombatIcon;
 
         if (type != NameplateType.Enemy) return NameplateLayouts.For(type);
 
         // The enemy health bar only shows during a fight we're part of: both the enemy and the player
         // must be in combat (otherwise it's just a name-only plate).
-        if (!playerInCombat || !InCombat(go)) return NameplateLayouts.EnemyIdle;
+        if (!playerInCombat || !ActorState.InCombat(go)) return NameplateLayouts.EnemyIdle;
 
         var isTarget = _targets.Target != null && _targets.Target.GameObjectId == go.GameObjectId;
         if (isTarget) return NameplateLayouts.EnemyTarget;
 
         // Non-target enemies in combat hide their name in the overworld (clutter), but keep it in duties.
         return InDuty() ? NameplateLayouts.EnemyCombatNamed : NameplateLayouts.EnemyCombat;
-    }
-
-    private static bool InCombat(IGameObject go)
-    {
-        return (go as ICharacter)?.StatusFlags.HasFlag(StatusFlags.InCombat) ?? false;
     }
 
     /// <summary>A character with a health pool that has hit zero — dead. (HP-less NPCs/objects aren't.)</summary>

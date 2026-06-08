@@ -2,7 +2,6 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.ClientState.Objects.Types;
-using Dalamud.Interface.Textures;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Component.GUI;
@@ -25,8 +24,6 @@ public sealed unsafe class PlayerCastBar : IHudModule, IMovableModule
     private const float FadeDuration = 0.15f;     // seconds to fade fully in or out
     private const float Margin = 12f;             // glow-bloom breathing room around the content
     private const float IconOffsetX = 4f;         // baked nudge of the spell icon further left of the bar
-    private static readonly uint CastColor = Colors.FromHex("D9A441");
-    private static readonly uint InterruptColor = Colors.FromHex("E05A5A");
 
     private const string NativeCastBar = "_CastBar"; // the game's own cast bar addon
     private static readonly Vector2 OffScreen = new(-9999f, -9999f);
@@ -37,10 +34,9 @@ public sealed unsafe class PlayerCastBar : IHudModule, IMovableModule
     private readonly CastBarConfig _config;
     private readonly IDataManager _data;
     private readonly IGameGui _gameGui;
-    private readonly Dictionary<uint, ISharedImmediateTexture> _iconCache = new();
+    private readonly IconCache _icons;
     private readonly LabelRenderer _labels;
     private readonly RenderScale _scale;
-    private readonly ITextureProvider _textures;
     private ExcelSheet<LuminaAction>? _actionSheet;
 
     // The native cast bar is moved off-screen (rather than toggled) while our module is enabled; we
@@ -63,7 +59,7 @@ public sealed unsafe class PlayerCastBar : IHudModule, IMovableModule
         _actorProvider = actorProvider;
         _bars = bars;
         _labels = labels;
-        _textures = textures;
+        _icons = new IconCache(textures);
         _data = data;
         _gameGui = gameGui;
         _addonLifecycle = addonLifecycle;
@@ -146,7 +142,7 @@ public sealed unsafe class PlayerCastBar : IHudModule, IMovableModule
         {
             // Progress bar.
             var frac = _castTotal > 0f ? Math.Clamp(_castCurrent / _castTotal, 0f, 1f) : 0f;
-            var color = _interruptible ? InterruptColor : CastColor;
+            var color = _interruptible ? Colors.CastInterruptible : Colors.Cast;
             _bars.Draw(dl, barPos, new Vector2(barWidth, barHeight), Colors.BarBackground, frac, color,
                 Colors.BarBorder, alpha: _alpha);
 
@@ -163,7 +159,7 @@ public sealed unsafe class PlayerCastBar : IHudModule, IMovableModule
             // Spell icon, a square docked to the left of the bar, its right edge on the bar's left edge.
             if (iconId != 0)
             {
-                var wrap = GetIcon(iconId).GetWrapOrEmpty();
+                var wrap = _icons.Get(iconId).GetWrapOrEmpty();
                 var iconTopLeft = new Vector2(barPos.X - iconSize - iconOffsetX, barPos.Y - nameH);
                 dl.AddImage(wrap.Handle, iconTopLeft, iconTopLeft + new Vector2(iconSize),
                     Vector2.Zero, Vector2.One, Colors.MultiplyAlpha(0xFFFFFFFFu, _alpha));
@@ -270,13 +266,5 @@ public sealed unsafe class PlayerCastBar : IHudModule, IMovableModule
     private static string Capitalize(string s)
     {
         return string.IsNullOrEmpty(s) ? s : char.ToUpperInvariant(s[0]) + s[1..];
-    }
-
-    private ISharedImmediateTexture GetIcon(uint iconId)
-    {
-        if (_iconCache.TryGetValue(iconId, out var tex)) return tex;
-        tex = _textures.GetFromGameIcon(new GameIconLookup(iconId));
-        _iconCache[iconId] = tex;
-        return tex;
     }
 }
