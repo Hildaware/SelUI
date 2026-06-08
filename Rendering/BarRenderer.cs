@@ -6,22 +6,28 @@ namespace SelUI.Rendering;
 public readonly record struct BarFill(float Fraction, uint Color);
 
 /// <summary>
-///     Draws SelUI's bars. The signature look, with no knobs: a rounded background, a translucent fill
-///     that gradients from the bar color on the left to a darker shade on the right, a tight outward
-///     glow, and a crisp border in the bar's own color.
+///     Draws SelUI's bars. The signature look, with no knobs: a rounded, fill-tinted background; a
+///     translucent fill that gradients from the bar color to a darker shade — anchored to a *full* bar so
+///     the darkening stays put as the bar drains — with a rounded leading edge; a soft outward flare on
+///     the bar outline; and a crisp border in the bar's own color over the top.
 /// </summary>
 public sealed class BarRenderer
 {
     /// <summary>Corner radius for every bar, at the reference UI scale (scaled per-frame by <see cref="RenderScale" />).</summary>
     public const float Rounding = 12f;
 
-    private const int BloomPasses = 8;
-    private const float FillOpacity = 0.4f;   // translucent fill
-    private const float BloomReach = 3f;      // glow spread in px (tight), at the reference UI scale
-    private const float BloomIntensity = 0.4f;
-    private const float DarkenFactor = 0.55f; // right end of the gradient is this fraction of the bar color
-    private const float BgDarken = 0.15f;     // background = the bar color darkened to this brightness
-    private const float BgOpacity = 0.5f;     // background opacity
+    private const float FillOpacity = 0.7f;   // translucent fill
+    private const float DarkenFactor = 0.3f;  // right end of the full-bar gradient is this fraction of the bar color
+    private const float BgDarken = 0.2f;      // background = the bar color darkened to this brightness
+    private const float BgOpacity = 0.65f;    // background opacity
+
+    // Soft outward flare on the bar outline, in the bar's own color, drawn under the crisp border so the
+    // edge reads as a glow rather than a hard line. All at the reference UI scale.
+    private const int BorderGlowPasses = 6;
+    private const float BorderGlowReach = 4f;       // how far the halo bleeds outward, px
+    private const float BorderGlowIntensity = 0.4f;
+    private const float BorderGlowDecay = 2f;       // exp(-t * this) falloff
+    private const float BorderGlowThickness = 2f;   // thickness of each halo ring
 
     private readonly RenderScale _scale;
 
@@ -57,8 +63,25 @@ public sealed class BarRenderer
             if (frac <= 0f) continue;
 
             var (fillPos, fillSize) = FillRect(pos, size, frac, direction);
-            DrawGlowFill(drawList, fillPos, fillPos + fillSize, ApplyAlpha(fill.Color, alpha), pos, size);
+            var fillEnd = fillPos + fillSize;
+            var baseColor = ApplyAlpha(fill.Color, alpha);
+
+            // Gradient anchored to a *full* bar: the right end darkens to DarkenFactor at 100%, and the
+            // visible fill samples that gradient at `frac`. So a given pixel keeps its color as the bar
+            // fills/unfills — the darken doesn't ride the moving fill front.
+            var fullRight = Darken(baseColor, DarkenFactor);
+            var left = ApplyAlpha(baseColor, FillOpacity);
+            var right = ApplyAlpha(LerpColor(baseColor, fullRight, frac), FillOpacity);
+
+            // The fill starts at the bar's edge (round that cap) and its leading edge is always rounded.
+            var leftAligned = MathF.Abs(fillPos.X - pos.X) < 0.5f;
+            DrawGradientFill(drawList, fillPos, fillEnd, left, right, leftAligned, true);
         }
+
+        // Soft border flare, in the bar's own color, under the crisp border.
+        var glowBase = fills.Length > 0 ? OpaqueColor(fills[0].Color) : borderColor;
+        if (glowBase != 0)
+            DrawBorderGlow(drawList, pos, size, ApplyAlpha(glowBase, alpha));
 
         // Border: explicit override (e.g. a selection highlight) wins, otherwise it matches the bar's
         // own color. Drawn crisp over the translucent fill.
@@ -86,10 +109,11 @@ public sealed class BarRenderer
     }
 
     /// <summary>
-    ///     Draw a glowing fill segment spanning <paramref name="startFrac" />..<paramref name="endFrac" />
-    ///     of the bar, in the bar's signature glow/gradient look. Used to overlay an absorb shield on a
-    ///     health bar (the shield starts at the HP fill and runs rightward). Corners that line up with the
-    ///     bar's own bounds get rounded; an interior span keeps square ends.
+    ///     Draw a gradient fill segment spanning <paramref name="startFrac" />..<paramref name="endFrac" />
+    ///     of the bar, in the bar's signature gradient look. Used to overlay an absorb shield on a health
+    ///     bar (the shield starts at the HP fill and runs rightward). Like the primary fill, the gradient
+    ///     is anchored to the full bar. Only ends that line up with the bar's bounds get rounded, so an
+    ///     interior span (the shield's left edge, butting the HP fill) keeps a square end.
     /// </summary>
     public void DrawSegment(ImDrawListPtr drawList, Vector2 pos, Vector2 size, uint color, float startFrac, float endFrac, float alpha = 1f)
     {
@@ -99,60 +123,65 @@ public sealed class BarRenderer
 
         var fillPos = new Vector2(pos.X + size.X * startFrac, pos.Y);
         var fillEnd = new Vector2(pos.X + size.X * endFrac, pos.Y + size.Y);
-        DrawGlowFill(drawList, fillPos, fillEnd, ApplyAlpha(color, alpha), pos, size);
-    }
+        var baseColor = ApplyAlpha(color, alpha);
 
-    private void DrawGlowFill(ImDrawListPtr drawList, Vector2 fillPos, Vector2 fillEnd, uint baseColor, Vector2 bgPos, Vector2 bgSize)
-    {
-        var rounding = ScaledRounding;
-        var bloomReach = BloomReach * _scale.Value;
+        var fullDark = Darken(baseColor, DarkenFactor);
+        var left = ApplyAlpha(LerpColor(baseColor, fullDark, startFrac), FillOpacity);
+        var right = ApplyAlpha(LerpColor(baseColor, fullDark, endFrac), FillOpacity);
 
-        // Tight outward glow: bloom passes largest/faintest first, tighter/brighter ones layered on top.
-        for (var pass = BloomPasses; pass >= 1; pass--)
-        {
-            var t = (float)pass / BloomPasses;
-            var expand = bloomReach * t;
-            var alphaFactor = BloomIntensity * MathF.Exp(-t * 2.5f);
-            var bloomColor = ApplyAlpha(baseColor, alphaFactor);
-
-            drawList.AddRectFilled(
-                new Vector2(fillPos.X - expand, fillPos.Y - expand),
-                new Vector2(fillEnd.X + expand, fillEnd.Y + expand),
-                bloomColor, rounding + expand);
-        }
-
-        // Translucent left-to-right gradient: bar color -> darker shade.
-        var left = ApplyAlpha(baseColor, FillOpacity);
-        var right = ApplyAlpha(Darken(baseColor, DarkenFactor), FillOpacity);
-        DrawRoundedGradient(drawList, fillPos, fillEnd, left, right, bgPos, bgSize);
+        var leftAligned = MathF.Abs(fillPos.X - pos.X) < 0.5f;
+        var rightAligned = MathF.Abs(fillEnd.X - (pos.X + size.X)) < 0.5f;
+        DrawGradientFill(drawList, fillPos, fillEnd, left, right, leftAligned, rightAligned);
     }
 
     /// <summary>
-    ///     Horizontal gradient that keeps rounded corners: solid rounded end-caps in the gradient's
-    ///     endpoint colors, with a flat gradient strip between them. Only the edges of the fill that
-    ///     line up with the bar's bounds get rounded (so a partial bar keeps a square fill front).
+    ///     A soft outward flare on the whole bar outline: several rounded-rect outlines in the bar color,
+    ///     each stepped further out and fainter, so the border bleeds into a halo. Outermost/faintest first.
     /// </summary>
-    private void DrawRoundedGradient(ImDrawListPtr drawList, Vector2 fillPos, Vector2 fillEnd, uint left, uint right, Vector2 bgPos, Vector2 bgSize)
+    private void DrawBorderGlow(ImDrawListPtr drawList, Vector2 pos, Vector2 size, uint baseColor)
     {
-        const float eps = 0.5f;
-        var bgEnd = bgPos + bgSize;
         var rounding = ScaledRounding;
+        var reach = BorderGlowReach * _scale.Value;
+        var thickness = BorderGlowThickness * _scale.Value;
+        var end = pos + size;
 
-        var leftAligned = MathF.Abs(fillPos.X - bgPos.X) < eps;
-        var rightAligned = MathF.Abs(fillEnd.X - bgEnd.X) < eps;
+        for (var pass = BorderGlowPasses; pass >= 1; pass--)
+        {
+            var t = (float)pass / BorderGlowPasses;
+            var expand = reach * t;
+            var alphaFactor = BorderGlowIntensity * MathF.Exp(-t * BorderGlowDecay);
+            var ringColor = ApplyAlpha(baseColor, alphaFactor);
 
+            drawList.AddRect(
+                new Vector2(pos.X - expand, pos.Y - expand),
+                new Vector2(end.X + expand, end.Y + expand),
+                ringColor, rounding + expand, ImDrawFlags.None, thickness);
+        }
+    }
+
+    /// <summary>
+    ///     Horizontal gradient fill with rounded end-caps on the requested ends (clamped to the fill's
+    ///     half-width and half-height): solid rounded caps in the endpoint colors, a flat gradient strip
+    ///     between them.
+    /// </summary>
+    private void DrawGradientFill(ImDrawListPtr drawList, Vector2 fillPos, Vector2 fillEnd, uint left, uint right, bool roundLeft, bool roundRight)
+    {
         var width = fillEnd.X - fillPos.X;
-        var halfW = width / 2f;
-        var leftInset = leftAligned ? MathF.Min(rounding, halfW) : 0f;
-        var rightInset = rightAligned ? MathF.Min(rounding, halfW) : 0f;
+        var height = fillEnd.Y - fillPos.Y;
+        if (width <= 0f) return;
 
-        // Too narrow for a middle strip: just a single rounded rect in the brighter color.
+        var rounding = ScaledRounding;
+        var maxR = MathF.Max(0f, MathF.Min(rounding, MathF.Min(width / 2f, height / 2f)));
+        var leftInset = roundLeft ? maxR : 0f;
+        var rightInset = roundRight ? maxR : 0f;
+
+        // Too narrow for a middle strip: a single rounded rect in the midpoint color.
         if (leftInset + rightInset >= width)
         {
             var flags = ImDrawFlags.RoundCornersNone;
-            if (leftAligned) flags |= ImDrawFlags.RoundCornersLeft;
-            if (rightAligned) flags |= ImDrawFlags.RoundCornersRight;
-            drawList.AddRectFilled(fillPos, fillEnd, left, rounding, flags);
+            if (roundLeft) flags |= ImDrawFlags.RoundCornersLeft;
+            if (roundRight) flags |= ImDrawFlags.RoundCornersRight;
+            drawList.AddRectFilled(fillPos, fillEnd, LerpColor(left, right, 0.5f), rounding, flags);
             return;
         }
 
@@ -188,6 +217,25 @@ public sealed class BarRenderer
         var b = Math.Min((uint)MathF.Round(((color >> 16) & 0xFF) * f), 255u);
         var a = (color >> 24) & 0xFF;
         return (a << 24) | (b << 16) | (g << 8) | r;
+    }
+
+    /// <summary>Componentwise lerp of two packed ABGR colors (alpha included).</summary>
+    private static uint LerpColor(uint a, uint b, float t)
+    {
+        t = Math.Clamp(t, 0f, 1f);
+        var r = Lerp8(a, b, t, 0);
+        var g = Lerp8(a, b, t, 8);
+        var bch = Lerp8(a, b, t, 16);
+        var al = Lerp8(a, b, t, 24);
+        return (al << 24) | (bch << 16) | (g << 8) | r;
+
+        static uint Lerp8(uint a, uint b, float t, int shift)
+        {
+            // Lerp in float space: as uint, cb - ca underflows when cb < ca (i.e. when darkening).
+            float ca = (a >> shift) & 0xFF;
+            float cb = (b >> shift) & 0xFF;
+            return (uint)MathF.Round(ca + (cb - ca) * t) & 0xFF;
+        }
     }
 
     private static (Vector2 pos, Vector2 size) FillRect(Vector2 pos, Vector2 size, float frac, BarDirection direction)
