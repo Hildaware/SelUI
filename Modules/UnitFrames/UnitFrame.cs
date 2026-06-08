@@ -116,12 +116,14 @@ public sealed class UnitFrame
     }
 
     /// <summary>
-    ///     The bars' footprint for a config, computed from the same vertical-layout rules as
-    ///     <see cref="Draw" /> but driven by config flags rather than a live snapshot (used by edit mode,
-    ///     where there's no actor). Mana/cast count only when they stack below the health bar; overlapping
-    ///     bars add no height. The job icon's left overhang is excluded.
+    ///     The edit-mode outline for a frame, driven by config flags rather than a live snapshot (edit
+    ///     mode has no actor). Starts from the bars' footprint — same vertical-layout rules as
+    ///     <see cref="Draw" />; mana/cast add height only when they stack below the health bar — then
+    ///     expands to cover the job icon's overhang (it straddles the bar's top-left), so the draggable
+    ///     box matches the whole visible frame even when the name/level header is off. Returns the box's
+    ///     top-left as an offset from the frame origin (≤ 0 where the icon overhangs) plus its size.
     /// </summary>
-    public Vector2 MeasureBoxSize(UnitFrameConfig cfg)
+    public (Vector2 Offset, Vector2 Size) MeasureEditBox(UnitFrameConfig cfg)
     {
         cfg = ScaleGeometry(cfg);
         var headerH = HeaderHeight(cfg);
@@ -130,12 +132,29 @@ public sealed class UnitFrame
         var mpH = cfg.ShowManaBar && !cfg.ManaOverlapHealth ? cfg.ManaBarHeight : 0f;
         var castH = cfg.ShowCastBar && !cfg.CastOverlapHealth ? cfg.CastBarHeight : 0f;
 
+        var hpY = headerH;
         var y = headerH;
         if (hpH > 0f) y += hpH;
         if (mpH > 0f) y += cfg.Gap + mpH;
         if (castH > 0f) y += cfg.Gap + castH;
 
-        return new Vector2(cfg.Width, y);
+        // Bars footprint from the frame origin.
+        float left = 0f, top = 0f, right = cfg.Width, bottom = y;
+
+        // Expand to include the job icon, which straddles the bar's top-left. Edit mode has no actor, so
+        // assume the icon shows whenever it's enabled (mirrors Draw's non-docked icon placement).
+        if (cfg.ShowJobIcon)
+        {
+            var iconLeftX = -cfg.JobIconSize / 2f + cfg.JobIconOffsetX;
+            var iconCenterY = hpY + hpH * cfg.JobIconAnchorY + cfg.JobIconOffsetY * _scale.Value;
+            var iconTop = iconCenterY - cfg.JobIconSize / 2f;
+            left = MathF.Min(left, iconLeftX);
+            top = MathF.Min(top, iconTop);
+            right = MathF.Max(right, iconLeftX + cfg.JobIconSize);
+            bottom = MathF.Max(bottom, iconTop + cfg.JobIconSize);
+        }
+
+        return (new Vector2(left, top), new Vector2(right - left, bottom - top));
     }
 
     /// <summary>
@@ -414,7 +433,7 @@ public sealed class UnitFrame
                 if (cfg.HealthText != HealthTextMode.None)
                 {
                     var (hx, hAnchor) = cfg.HealthTextOnLeft
-                        ? (S(12f), DrawAnchor.Left)
+                        ? (S(cfg.HealthTextPadX), DrawAnchor.Left)
                         : (cfg.Width - S(4f), DrawAnchor.Right);
                     _labels.Draw(dl, HealthText(cfg.HealthText, snap.HpCurrent, snap.HpMax),
                         pos + new Vector2(hx, hpH / 2f + cfg.HealthTextOffsetY), fs, cfg.TextColor, hAnchor, alpha: alpha);

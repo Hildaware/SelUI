@@ -28,8 +28,14 @@ public sealed class UnitFrameConfig : ModuleConfig
     /// <summary>When true the frame hides if there is no actor (used by target / focus). Player keeps this false.</summary>
     public bool HideWhenNoActor { get; set; }
 
-    /// <summary>Hide the frame while the player is in combat (only wired for the target frame).</summary>
+    /// <summary>Hide the frame while the player is in combat (fades out). Needs an in-combat source wired.</summary>
     public bool HideInCombat { get; set; }
+
+    /// <summary>Hide the frame while the player is NOT in combat (fades out). Needs an in-combat source wired.</summary>
+    public bool HideOutOfCombat { get; set; }
+
+    /// <summary>Hide the frame while its actor is at full health (fades out, so it only shows when damaged).</summary>
+    public bool HideWhenFullHealth { get; set; }
 
     /// <summary>
     ///     Fade the frame out — and stop it taking clicks — once the actor is past action range (~30y).
@@ -47,6 +53,9 @@ public sealed class UnitFrameConfig : ModuleConfig
 
     /// <summary>Draw the health text on the left of the bar instead of the right.</summary>
     public bool HealthTextOnLeft { get; set; }
+
+    /// <summary>Left pad (px) for left-justified health text, from the bar's left edge. Baked per-frame.</summary>
+    public float HealthTextPadX { get; set; } = 12f;
 
     /// <summary>Vertical nudge of the health text from its centered position (positive = down). Baked per-frame.</summary>
     public float HealthTextOffsetY { get; set; }
@@ -154,14 +163,49 @@ public sealed class UnitFrameConfig : ModuleConfig
         return c;
     }
 
-    /// <summary>Sensible defaults for the player's own frame (lower-left, always visible).</summary>
+    /// <summary>
+    ///     Defaults for the player's own frame: a clean job-colored health bar with the job icon docked
+    ///     top-left and a slim healers-only mana bar overlapping it — matching the party-row look. No name
+    ///     or level; a baked health-% reads on the left of the bar. Appearance is baked and re-applied on
+    ///     every load (see Plugin); only Position, Width and the visibility toggles stay user state. The
+    ///     cast bar and buffs/debuffs are their own modules (PlayerCastBar / PlayerStatuses).
+    /// </summary>
     public static UnitFrameConfig PlayerDefault()
     {
         return new UnitFrameConfig
         {
             Position = new Vector2(80f, 800f),
+
+            // No name / level — keep the player's own frame minimal. Health % reads left-justified,
+            // just inside the left of the bar. FontSize drives that text (the only text shown here).
+            ShowName = false,
+            ShowLevel = false,
+            HealthText = HealthTextMode.Percent,
+            HealthTextOnLeft = true,
+            HealthTextPadX = 18f,
+            FontSize = 16f,
+
+            // Health bar matches the party-row height.
+            HealthBarHeight = 18f,
+
+            // Mana: party-row sizing/placement, and only for jobs that care about it (healers).
+            ManaBarHeight = 8f,
+            ManaWidthFactor = 0.65f,
+            ManaOverlapHealth = true,
+            ManaHealersOnly = true,
+
+            // Job icon docked top-left, like a party row.
+            JobIconSize = 48f,
+            JobIconOffsetX = 4f,
+            JobIconAnchorY = 0f,
+
             ShowCastBar = false, // the player cast bar is its own module (PlayerCastBar)
-            HideWhenNoActor = false
+            HideWhenNoActor = false,
+
+            // Declutter by default: only show the frame while you're in combat and actually hurt. Both
+            // are user-toggleable (see Plugin's player re-apply, which preserves them).
+            HideOutOfCombat = true,
+            HideWhenFullHealth = true
         };
     }
 
