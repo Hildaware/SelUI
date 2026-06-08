@@ -2,6 +2,7 @@ using Dalamud.Configuration;
 using Dalamud.Interface.FontIdentifier;
 using Dalamud.Plugin;
 using SelUI.Modules.Alliance;
+using SelUI.Modules.BarBuilder;
 using SelUI.Modules.CastBar;
 using SelUI.Modules.EnemyList;
 using SelUI.Modules.Nameplates;
@@ -43,6 +44,9 @@ public sealed class Configuration : IPluginConfiguration
     public AllianceFramesConfig Alliance { get; set; } = new();
     public EnemyListConfig EnemyList { get; set; } = new();
     public NameplatesConfig Nameplates { get; set; } = new();
+
+    /// <summary>TEMPORARY: the visual bar-tuner dev tool. Additive — remove with the BarBuilder module.</summary>
+    public BarBuilderConfig BarBuilder { get; set; } = new();
 
     public int Version { get; set; } = 11;
 

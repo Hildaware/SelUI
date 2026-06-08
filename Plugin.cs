@@ -8,6 +8,7 @@ using Dalamud.Game.ClientState.Objects.Types;
 using SelUI.Game;
 using SelUI.Modules;
 using SelUI.Modules.Alliance;
+using SelUI.Modules.BarBuilder;
 using SelUI.Modules.CastBar;
 using SelUI.Modules.EnemyList;
 using SelUI.Modules.Nameplates;
@@ -154,6 +155,8 @@ public sealed class Plugin : IDalamudPlugin
             new EnemyList(config.EnemyList, new EnemyListHelper(gameGui), objectTable, targetManager, _mouseover,
                 unitFrame, textureProvider, mockDebuffIcons, _renderScale),
             new Nameplates(config.Nameplates, objectTable, targetManager, gameGui, condition, unitFrame, _renderScale)
+            // TEMPORARY dev tool: visual bar tuner — uncomment to bring it back in the config window / HUD.
+            // , new BarBuilder(config.BarBuilder)
         };
 
         _hudManager = new HudManager(modules, () => config.Enabled, clientState, condition, log);
