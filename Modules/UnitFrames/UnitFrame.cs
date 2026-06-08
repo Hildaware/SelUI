@@ -126,6 +126,23 @@ public sealed class UnitFrame
         return new Vector2(cfg.Width, y);
     }
 
+    /// <summary>
+    ///     The Y offset, from the frame's origin, of the health bar's vertical center — by the same
+    ///     header/scale rules as <see cref="Draw" />. Lets external decorations (e.g. the enemy-list threat
+    ///     icon) align to the bar without duplicating the layout math.
+    /// </summary>
+    public float HealthBarCenterY(UnitFrameConfig cfg)
+    {
+        cfg = ScaleGeometry(cfg);
+        var nameAboveBar = cfg.ShowName && !cfg.NameRightOfIcon;
+        var headerH = 0f;
+        if (cfg.ShowLevel) headerH = MathF.Max(headerH, _labels.Scale(cfg.LevelFontSize));
+        if (nameAboveBar) headerH = MathF.Max(headerH, _labels.Scale(cfg.NameFontSize));
+
+        var hpH = cfg.ShowHealthBar ? cfg.HealthBarHeight : 0f;
+        return headerH + hpH / 2f; // hpY == headerH in Draw's layout
+    }
+
     public void Draw(string id, UnitFrameConfig cfg, IGameObject? actor, Vector2? positionOverride = null, bool selected = false,
         Action<IGameObject>? onLeftClick = null, Action<IGameObject>? onRightClick = null, Action<IGameObject>? onHover = null,
         PreviewUnit? preview = null, bool drawStatuses = true, bool fade = true, string? title = null, bool titleAbove = false,

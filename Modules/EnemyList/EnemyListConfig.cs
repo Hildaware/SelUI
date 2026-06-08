@@ -10,7 +10,7 @@ public sealed class EnemyListConfig : ModuleConfig
     public Vector2 Position { get; set; } = new(1480f, 300f);
 
     /// <summary>Vertical pitch between rows.</summary>
-    public float RowHeight { get; set; } = 50f;
+    public float RowHeight { get; set; } = 54f;
 
     /// <summary>Stack rows upward from <see cref="Position" /> instead of downward.</summary>
     public bool GrowUp { get; set; }

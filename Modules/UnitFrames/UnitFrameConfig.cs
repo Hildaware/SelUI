@@ -202,7 +202,7 @@ public sealed class UnitFrameConfig : ModuleConfig
         return new UnitFrameConfig
         {
             Width = 220f,
-            HealthBarHeight = 20f,
+            HealthBarHeight = 16f,
             ShowManaBar = false,
             ShowCastBar = false,
             ShowJobIcon = false,
@@ -211,9 +211,7 @@ public sealed class UnitFrameConfig : ModuleConfig
             NameOnBarLine = true,
             NameFontSize = 16f,
             FontSize = 12f,
-            HealthText = HealthTextMode.Percent,
-            HealthTextOnLeft = true,
-            HealthTextOffsetY = 4f,
+            HealthText = HealthTextMode.None,
             HideWhenNoActor = false
         };
     }

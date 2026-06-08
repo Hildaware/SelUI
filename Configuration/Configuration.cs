@@ -44,7 +44,7 @@ public sealed class Configuration : IPluginConfiguration
     public EnemyListConfig EnemyList { get; set; } = new();
     public NameplatesConfig Nameplates { get; set; } = new();
 
-    public int Version { get; set; } = 10;
+    public int Version { get; set; } = 11;
 
     public void Save(IDalamudPluginInterface pi)
     {

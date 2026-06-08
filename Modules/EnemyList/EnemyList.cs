@@ -189,17 +189,34 @@ public sealed class EnemyList : IHudModule, IMovableModule
         var wrap = _threatTexture.GetWrapOrEmpty();
         if (wrap.Handle == IntPtr.Zero || wrap.Width == 0) return;
 
-        // The enmity icons are a 48px sprite row at v = 0.48 in the enemy-list texture (cells 0..3).
-        var cell = Math.Min(3, enmity - 1);
-        var w = 48f / wrap.Width;
-        var h = 48f / wrap.Height;
-        var uv0 = new Vector2(w * cell, 0.48f);
-        var uv1 = new Vector2(w * (cell + 1), 0.48f + h);
+        // Prefer the game's own ULD part rect for this enmity (the icons aren't a uniform grid). Part
+        // coords are 1x; the _hr1 texture is 2x, so scale by 2 to get texture pixels. Fall back to the old
+        // uniform-48px-cell assumption only until the real rect has been seen.
+        Vector2 uv0, uv1;
+        float aspect;
+        var rect = _helper.PartRect(enmity);
+        if (rect is { } r)
+        {
+            uv0 = new Vector2(2f * r.X / wrap.Width, 2f * r.Y / wrap.Height);
+            uv1 = new Vector2(2f * (r.X + r.Z) / wrap.Width, 2f * (r.Y + r.W) / wrap.Height);
+            aspect = r.W > 0f ? r.Z / r.W : 1f;
+        }
+        else
+        {
+            var cell = Math.Min(3, enmity - 1);
+            var w = 48f / wrap.Width;
+            var h = 48f / wrap.Height;
+            uv0 = new Vector2(w * cell, 0.48f);
+            uv1 = new Vector2(w * (cell + 1), 0.48f + h);
+            aspect = 1f;
+        }
 
-        // Centered on the bar's left edge, vertically centered on the bar (header 14 + bar 20 => 24), +2 down.
-        // Scaled with the UI so it tracks the (scaled) row.
-        var size = new Vector2(ThreatIconSize * _scale.Value);
-        var pos = origin + new Vector2(0f, 26f * _scale.Value) - size / 2f;
+        // Fixed on-screen height (aspect-preserved width) so every enmity icon reads the same size. The
+        // texture's center sits on the health bar's left edge: centered on origin.X (the bar's left) and
+        // on the bar's vertical center (from the frame's own layout, so it tracks header/scale changes).
+        var iconH = ThreatIconSize * _scale.Value;
+        var size = new Vector2(iconH * aspect, iconH);
+        var pos = origin + new Vector2(0f, _frame.HealthBarCenterY(_config.Row)) - size / 2f;
 
         // Foreground draw list so it always sits above the health bar.
         ImGui.GetForegroundDrawList().AddImage(wrap.Handle, pos, pos + size, uv0, uv1);

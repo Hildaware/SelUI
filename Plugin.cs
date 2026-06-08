@@ -85,6 +85,14 @@ public sealed class Plugin : IDalamudPlugin
             config.Save(pluginInterface);
         }
 
+        // One-time default: push the new enemy-list row spacing (still user-adjustable afterward).
+        if (config.Version < 11)
+        {
+            config.EnemyList.RowHeight = 54f;
+            config.Version = 11;
+            config.Save(pluginInterface);
+        }
+
         // Row appearance for the list frames is baked design, not user config — re-apply from code on
         // every load (the module Position/spacing stays user-configurable on the parent config).
         config.PartyFrames.Row = UnitFrameConfig.PartyRowDefault();

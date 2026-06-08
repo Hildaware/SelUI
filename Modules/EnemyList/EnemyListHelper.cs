@@ -13,12 +13,21 @@ public sealed unsafe class EnemyListHelper
     private readonly List<(uint EntityId, int Enmity)> _enemies = new();
     private readonly IGameGui _gameGui;
 
+    // The threat icons aren't a uniform grid — each enmity level is a separate ULD part with its own
+    // (U, V, W, H). We read the real rect off the native addon's image node so our copy samples exactly
+    // what the game does, instead of assuming evenly-sized cells. Indexed by enmity (1..4); cached across
+    // frames so it survives once seen (and is available to the preview).
+    private readonly Vector4?[] _partRects = new Vector4?[5];
+
     public EnemyListHelper(IGameGui gameGui)
     {
         _gameGui = gameGui;
     }
 
     public IReadOnlyList<(uint EntityId, int Enmity)> Enemies => _enemies;
+
+    /// <summary>The native ULD part rect (U, V, W, H, in 1x texture pixels) for an enmity level, if known.</summary>
+    public Vector4? PartRect(int enmity) => enmity is >= 1 and <= 4 ? _partRects[enmity] : null;
 
     public void Update()
     {
@@ -51,6 +60,16 @@ public sealed unsafe class EnemyListHelper
         var image = (AtkImageNode*)node->GetComponent()->UldManager.SearchNodeById(13);
         if (image == null) return 0;
 
-        return Math.Min(4, image->PartId + 1);
+        var enmity = Math.Min(4, image->PartId + 1);
+
+        // Cache the real part rect for this enmity so the icon samples the game's own UVs.
+        var partsList = image->PartsList;
+        if (partsList != null && image->PartId < partsList->PartCount)
+        {
+            var part = partsList->Parts[image->PartId];
+            _partRects[enmity] = new Vector4(part.U, part.V, part.Width, part.Height);
+        }
+
+        return enmity;
     }
 }

@@ -60,11 +60,11 @@ public static class StatusLayouts
 
     public static StatusListConfig EnemyDebuffs()
     {
-        // Only debuffs I applied, bottom-right of the 220-wide bar (header 14 + bar 20), growing left.
+        // Only debuffs I applied, bottom-right of the 220-wide bar (header 14 + bar 16), growing left.
         return new StatusListConfig
         {
             OwnOnly = true,
-            Position = new Vector2(220f - 22f, 14f + 20f + 4f + 2f),
+            Position = new Vector2(220f - 22f, 14f + 16f + 4f + 2f + 4f),
             GrowRight = false,
             IconSize = 22f,
             FontSize = 10f
