@@ -1,0 +1,226 @@
+name: Release SelUI
+
+on:
+  push:
+    tags:
+      - 'release/[0-9]+.[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '4-part version (e.g. 0.1.0.0).'
+        required: true
+        type: string
+      dry_run:
+        description: 'Skip cross-repo writes (build + upload artifacts only).'
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+      DRY_RUN: ${{ inputs.dry_run || 'false' }}
+    steps:
+      - name: Resolve version and mode
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = "${{ inputs.version }}"
+            Write-Host "workflow_dispatch (dry_run=$env:DRY_RUN) version=$version"
+          } else {
+            $version = "${{ github.ref_name }}" -replace '^release/', ''
+            Write-Host "tag push version=$version"
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+            Write-Error "Version '$version' is not 4-part dotted decimal"
+            exit 1
+          }
+          "SELUI_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Download Dalamud distribution
+        shell: pwsh
+        run: |
+          # The csproj resolves DalamudLibPath from $DALAMUD_HOME when set; otherwise it
+          # expects ../dalamud/ relative to the project, which doesn't exist on a CI runner.
+          $dalamudDir = Join-Path $env:RUNNER_TEMP "dalamud"
+          $zip = Join-Path $env:RUNNER_TEMP "dalamud-dist.zip"
+          Invoke-WebRequest -Uri "https://goatcorp.github.io/dalamud-distrib/latest.zip" -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dalamudDir -Force
+          Remove-Item $zip
+          if (-not (Test-Path (Join-Path $dalamudDir "Dalamud.dll"))) {
+            Write-Error "Dalamud.dll not found after extracting distrib. Layout may have changed."
+            exit 1
+          }
+          "DALAMUD_HOME=$dalamudDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Dalamud refs staged at $dalamudDir"
+
+      - name: Build Release with version override
+        shell: pwsh
+        run: |
+          dotnet build SelUI.csproj -c Release `
+            -p:Version=$env:SELUI_VERSION `
+            -p:AssemblyVersion=$env:SELUI_VERSION `
+            -p:FileVersion=$env:SELUI_VERSION `
+            -p:InformationalVersion=$env:SELUI_VERSION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Stage release artifact
+        shell: pwsh
+        run: |
+          # DalamudPackager (bundled with Dalamud.NET.Sdk) writes latest.zip under bin/Release.
+          $latest = Get-ChildItem -Path "bin/Release" -Recurse -Filter "latest.zip" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $latest) {
+            Write-Error "DalamudPackager did not produce latest.zip under bin/Release. Check the Release build output."
+            exit 1
+          }
+          $pluginZip = Join-Path $latest.DirectoryName "$env:SELUI_VERSION.zip"
+          Copy-Item -Force $latest.FullName $pluginZip
+          "PLUGIN_ZIP=$pluginZip" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Packaged $pluginZip"
+
+      - name: Upload artifact (dry-run only)
+        if: env.DRY_RUN == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: selui-${{ env.SELUI_VERSION }}-dry-run
+          path: ${{ env.PLUGIN_ZIP }}
+          if-no-files-found: error
+
+      - name: Bump csproj version on main
+        if: env.DRY_RUN != 'true'
+        shell: pwsh
+        run: |
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          $csproj = "SelUI.csproj"
+          $content = Get-Content $csproj -Raw
+          $content = $content -replace '<AssemblyVersion>[^<]+</AssemblyVersion>',           "<AssemblyVersion>$env:SELUI_VERSION</AssemblyVersion>"
+          $content = $content -replace '<FileVersion>[^<]+</FileVersion>',                   "<FileVersion>$env:SELUI_VERSION</FileVersion>"
+          $content = $content -replace '<InformationalVersion>[^<]+</InformationalVersion>', "<InformationalVersion>$env:SELUI_VERSION</InformationalVersion>"
+          Set-Content -Path $csproj -Value $content -NoNewline
+          $changed = git status --porcelain $csproj
+          if (-not $changed) {
+            Write-Host "csproj already at $env:SELUI_VERSION; nothing to commit"
+          } else {
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add $csproj
+            git commit -m "chore: bump version to $env:SELUI_VERSION [skip ci]"
+            git push origin main
+          }
+
+      - name: Publish SelUI release
+        if: env.DRY_RUN != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:SELUI_VERSION `
+            --repo Hildaware/SelUI `
+            --title $env:SELUI_VERSION `
+            --notes "SelUI $env:SELUI_VERSION" `
+            $env:PLUGIN_ZIP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "RELEASE_URL=https://github.com/Hildaware/SelUI/releases/tag/$env:SELUI_VERSION" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Update index.json on Hildaware/xiv
+        if: env.DRY_RUN != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.HILDAWARE_PAT }}
+        run: |
+          $xivPath = Join-Path $env:RUNNER_TEMP "xiv"
+          git clone "https://x-access-token:$env:GH_TOKEN@github.com/Hildaware/xiv.git" $xivPath
+          Push-Location $xivPath
+
+          $indexPath = "index.json"
+          $download = "https://github.com/Hildaware/SelUI/releases/download/$env:SELUI_VERSION/$env:SELUI_VERSION.zip"
+
+          $raw = Get-Content $indexPath -Raw
+          $entries = @($raw | ConvertFrom-Json)
+
+          $entry = $entries | Where-Object { $_.InternalName -eq 'SelUI' } | Select-Object -First 1
+          if ($null -eq $entry) {
+            Write-Host "No existing SelUI entry; appending."
+            $entry = [pscustomobject]@{
+              Author              = "Sel"
+              Name                = "SelUI"
+              AssemblyVersion     = $env:SELUI_VERSION
+              Punchline           = "A streamlined, FF-flavored HUD replacement."
+              Description         = "A clean, opinionated UI replacement for unit frames, party frames, nameplates and more. Plug-and-play modules with minimal configuration and a deliberately FF-like look."
+              InternalName        = "SelUI"
+              RepoUrl             = "https://github.com/Hildaware/SelUI"
+              IsHide              = $false
+              IsTestingExclusive  = $false
+              ApplicableVersion   = "any"
+              DownloadLinkInstall = $download
+              DownloadLinkTesting = $download
+              DownloadLinkUpdate  = $download
+              IconUrl             = "https://hildaware.github.io/Hilda/media/selUI.png"
+            }
+            $entries += $entry
+          } else {
+            $entry.AssemblyVersion     = $env:SELUI_VERSION
+            $entry.DownloadLinkInstall = $download
+            $entry.DownloadLinkTesting = $download
+            $entry.DownloadLinkUpdate  = $download
+          }
+
+          $json = ConvertTo-Json -InputObject $entries -Depth 10
+          Set-Content -Path $indexPath -Value $json -Encoding utf8 -NoNewline
+
+          $changed = git status --porcelain $indexPath
+          if (-not $changed) {
+            Write-Host "index.json already at $env:SELUI_VERSION; skipping push"
+            "XIV_COMMIT_URL=(no change)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          } else {
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add $indexPath
+            git commit -m "Update SelUI to $env:SELUI_VERSION"
+            git push origin HEAD:main
+            $sha = git rev-parse HEAD
+            "XIV_COMMIT_URL=https://github.com/Hildaware/xiv/commit/$sha" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+          Pop-Location
+
+      - name: Write job summary
+        shell: pwsh
+        run: |
+          if ($env:DRY_RUN -eq 'true') {
+            $summary = @"
+          ## Dry run: SelUI $env:SELUI_VERSION
+
+          Built and packaged ``$env:SELUI_VERSION.zip`` (uploaded as a workflow artifact on this run page). No cross-repo writes were performed.
+
+          When you're ready for a real release, push ``release/<version>`` from main (or re-run this workflow with ``dry_run=false``).
+          "@
+          } else {
+            $summary = @"
+          ## SelUI $env:SELUI_VERSION released
+
+          | Artifact | Location |
+          |---|---|
+          | Plugin release | $env:RELEASE_URL |
+          | index.json commit | $env:XIV_COMMIT_URL |
+          "@
+          }
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $summary
