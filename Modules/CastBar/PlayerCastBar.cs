@@ -39,6 +39,7 @@ public sealed unsafe class PlayerCastBar : IHudModule, IMovableModule
     private readonly IGameGui _gameGui;
     private readonly Dictionary<uint, ISharedImmediateTexture> _iconCache = new();
     private readonly LabelRenderer _labels;
+    private readonly RenderScale _scale;
     private readonly ITextureProvider _textures;
     private ExcelSheet<LuminaAction>? _actionSheet;
 
@@ -56,7 +57,7 @@ public sealed unsafe class PlayerCastBar : IHudModule, IMovableModule
     private bool _interruptible;
 
     public PlayerCastBar(CastBarConfig config, Func<IBattleChara?> actorProvider, BarRenderer bars, LabelRenderer labels,
-        ITextureProvider textures, IDataManager data, IGameGui gameGui, IAddonLifecycle addonLifecycle)
+        ITextureProvider textures, IDataManager data, IGameGui gameGui, IAddonLifecycle addonLifecycle, RenderScale scale)
     {
         _config = config;
         _actorProvider = actorProvider;
@@ -66,6 +67,7 @@ public sealed unsafe class PlayerCastBar : IHudModule, IMovableModule
         _data = data;
         _gameGui = gameGui;
         _addonLifecycle = addonLifecycle;
+        _scale = scale;
 
         // Hook the native cast bar's PreDraw and shove its root node off-screen every
         // frame, so it never fights us re-asserting its position. Restored on disable / unload.
@@ -81,11 +83,11 @@ public sealed unsafe class PlayerCastBar : IHudModule, IMovableModule
     // The visual block extends left of Position (the icon) and above it (the name row); mirror the
     // layout math in Draw so the box matches the rendered cast bar.
     public Vector2 EditTopLeft =>
-        _config.Position - new Vector2(_labels.Scale(_config.NameFontSize) + _config.BarHeight + IconOffsetX, _labels.Scale(_config.NameFontSize));
+        _config.Position - new Vector2(_labels.Scale(_config.NameFontSize) + (_config.BarHeight + IconOffsetX) * _scale.Value, _labels.Scale(_config.NameFontSize));
 
     public Vector2 EditSize =>
-        new(_labels.Scale(_config.NameFontSize) + _config.BarHeight + IconOffsetX + _config.Width,
-            _config.BarHeight + _labels.Scale(_config.NameFontSize));
+        new(_labels.Scale(_config.NameFontSize) + (_config.BarHeight + IconOffsetX + _config.Width) * _scale.Value,
+            _config.BarHeight * _scale.Value + _labels.Scale(_config.NameFontSize));
 
     public void MoveBy(Vector2 delta) => _config.Position += delta;
 
@@ -118,32 +120,39 @@ public sealed unsafe class PlayerCastBar : IHudModule, IMovableModule
         var cfg = _config;
         var (name, iconId) = CastAction(_castActionId, _castActionType);
 
+        // Bar geometry grows with the game's UI scale; the anchor (Position) stays put.
+        var v = _scale.Value;
+        var barHeight = cfg.BarHeight * v;
+        var barWidth = cfg.Width * v;
+        var iconOffsetX = IconOffsetX * v;
+        var margin = Margin * v;
+
         var nameH = _labels.Scale(cfg.NameFontSize); // the name row's height, scaled with the font
-        var iconSize = nameH + cfg.BarHeight; // square, spanning the name row + the bar
+        var iconSize = nameH + barHeight; // square, spanning the name row + the bar
         var barPos = cfg.Position;
 
         // Window bounds: icon (left of the bar), the name row (above), the bar, plus glow margin. The
         // name can be wider than the bar, so extend the right edge to fit it.
         var nameWidth = _labels.Measure(name, cfg.NameFontSize).X;
-        var left = barPos.X - iconSize - IconOffsetX;
+        var left = barPos.X - iconSize - iconOffsetX;
         var top = barPos.Y - nameH;
-        var right = barPos.X + MathF.Max(cfg.Width, nameWidth);
-        var bottom = barPos.Y + cfg.BarHeight;
+        var right = barPos.X + MathF.Max(barWidth, nameWidth);
+        var bottom = barPos.Y + barHeight;
 
-        var windowPos = new Vector2(left - Margin, top - Margin);
-        var windowSize = new Vector2(right - left + Margin * 2f, bottom - top + Margin * 2f);
+        var windowPos = new Vector2(left - margin, top - margin);
+        var windowSize = new Vector2(right - left + margin * 2f, bottom - top + margin * 2f);
 
         DrawHelper.DrawInWindow("SelUI_CastBar", windowPos, windowSize, false, dl =>
         {
             // Progress bar.
             var frac = _castTotal > 0f ? Math.Clamp(_castCurrent / _castTotal, 0f, 1f) : 0f;
             var color = _interruptible ? InterruptColor : CastColor;
-            _bars.Draw(dl, barPos, new Vector2(cfg.Width, cfg.BarHeight), Colors.BarBackground, frac, color,
+            _bars.Draw(dl, barPos, new Vector2(barWidth, barHeight), Colors.BarBackground, frac, color,
                 Colors.BarBorder, alpha: _alpha);
 
             // Remaining cast time, right-justified on the bar.
             var remaining = MathF.Max(0f, _castTotal - _castCurrent);
-            _labels.Draw(dl, remaining.ToString("0.0"), new Vector2(barPos.X + cfg.Width - 4f, barPos.Y + cfg.BarHeight / 2f),
+            _labels.Draw(dl, remaining.ToString("0.0"), new Vector2(barPos.X + barWidth - 4f * v, barPos.Y + barHeight / 2f),
                 cfg.NameFontSize * 0.85f, Colors.White, DrawAnchor.Right, alpha: _alpha);
 
             // Spell name, above the bar and left-aligned to it.
@@ -155,7 +164,7 @@ public sealed unsafe class PlayerCastBar : IHudModule, IMovableModule
             if (iconId != 0)
             {
                 var wrap = GetIcon(iconId).GetWrapOrEmpty();
-                var iconTopLeft = new Vector2(barPos.X - iconSize - IconOffsetX, barPos.Y - nameH);
+                var iconTopLeft = new Vector2(barPos.X - iconSize - iconOffsetX, barPos.Y - nameH);
                 dl.AddImage(wrap.Handle, iconTopLeft, iconTopLeft + new Vector2(iconSize),
                     Vector2.Zero, Vector2.One, Colors.MultiplyAlpha(0xFFFFFFFFu, _alpha));
             }

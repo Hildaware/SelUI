@@ -61,8 +61,8 @@ public static class NameplateLayouts
         c.ShowHealthBar = true;
         c.ShowCastBar = true;
         c.ShowName = showName;
-        c.Width = 260f * scale;
-        c.HealthBarHeight = 18f * scale;
+        c.Width = 200f * scale;
+        c.HealthBarHeight = 16f; // fixed height; only width scales when targeted
         c.NameFontSize = 16f * scale;
         // Cast bar styled like the party mana bar: a thin strip overlapping the health bar's bottom-right.
         c.CastBarHeight = 8f * scale;
@@ -89,6 +89,7 @@ public static class NameplateLayouts
         c.JobIconSize = 56f;
         c.Width = 56f;
         c.JobIconOffsetX = 28f; // = Width/2, centers the icon on the nameplate point
+        c.JobIconOffsetY = -28f; // lift the icon above the head point (it's otherwise centered on it, half below)
         return c;
     }
 

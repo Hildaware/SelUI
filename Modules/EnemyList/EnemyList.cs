@@ -22,6 +22,7 @@ public sealed class EnemyList : IHudModule, IMovableModule
     private readonly UnitFrame _frame;
     private readonly EnemyListHelper _helper;
     private readonly IObjectTable _objects;
+    private readonly RenderScale _scale;
     private readonly ITargetManager _targets;
     private readonly ITextureProvider _textures;
     private readonly IReadOnlyList<uint> _mockDebuffIcons;
@@ -31,7 +32,7 @@ public sealed class EnemyList : IHudModule, IMovableModule
     private ISharedImmediateTexture? _threatTexture;
 
     public EnemyList(EnemyListConfig config, EnemyListHelper helper, IObjectTable objects, ITargetManager targets,
-        MouseoverManager mouseover, UnitFrame frame, ITextureProvider textures, IReadOnlyList<uint> mockDebuffIcons)
+        MouseoverManager mouseover, UnitFrame frame, ITextureProvider textures, IReadOnlyList<uint> mockDebuffIcons, RenderScale scale)
     {
         _config = config;
         _helper = helper;
@@ -39,6 +40,7 @@ public sealed class EnemyList : IHudModule, IMovableModule
         _targets = targets;
         _frame = frame;
         _textures = textures;
+        _scale = scale;
         _mockDebuffIcons = mockDebuffIcons;
         _onLeftClick = actor => _targets.Target = actor;
         _onRightClick = UnitInteraction.OpenContextMenu;
@@ -52,15 +54,18 @@ public sealed class EnemyList : IHudModule, IMovableModule
     public string EditLabel => Name;
 
     public Vector2 EditTopLeft => _config.GrowUp
-        ? _config.Position - new Vector2(0f, (_config.MaxRows - 1) * _config.RowHeight)
+        ? _config.Position - new Vector2(0f, (_config.MaxRows - 1) * RowPitch)
         : _config.Position;
 
-    public Vector2 EditSize => new(_config.Row.Width, _config.RowHeight * _config.MaxRows);
+    public Vector2 EditSize => new(_config.Row.Width * _scale.Value, RowPitch * _config.MaxRows);
     public void MoveBy(Vector2 delta) => _config.Position += delta;
+
+    /// <summary>Vertical pitch between rows, scaled with the UI so spacing tracks the (scaled) row size.</summary>
+    private float RowPitch => _config.RowHeight * _scale.Value;
 
     /// <summary>Top-left of row <paramref name="index" />, stacking up or down per config.</summary>
     private Vector2 RowOrigin(int index) =>
-        _config.Position + new Vector2(0f, (_config.GrowUp ? -1f : 1f) * index * _config.RowHeight);
+        _config.Position + new Vector2(0f, (_config.GrowUp ? -1f : 1f) * index * RowPitch);
 
     public void Dispose()
     {
@@ -192,8 +197,9 @@ public sealed class EnemyList : IHudModule, IMovableModule
         var uv1 = new Vector2(w * (cell + 1), 0.48f + h);
 
         // Centered on the bar's left edge, vertically centered on the bar (header 14 + bar 20 => 24), +2 down.
-        var size = new Vector2(ThreatIconSize);
-        var pos = origin + new Vector2(0f, 26f) - size / 2f;
+        // Scaled with the UI so it tracks the (scaled) row.
+        var size = new Vector2(ThreatIconSize * _scale.Value);
+        var pos = origin + new Vector2(0f, 26f * _scale.Value) - size / 2f;
 
         // Foreground draw list so it always sits above the health bar.
         ImGui.GetForegroundDrawList().AddImage(wrap.Handle, pos, pos + size, uv0, uv1);

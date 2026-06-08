@@ -32,6 +32,9 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Global multiplier applied to every font size. 1.0 = the baked sizes. Clamped to [0.75, 1.5] in the UI.</summary>
     public float FontScale { get; set; } = 1f;
 
+    /// <summary>Global multiplier on every baked pixel size, so the whole HUD scales uniformly. 1.0 = the baked sizes.</summary>
+    public float UiScale { get; set; } = 1f;
+
     // --- Module configs ---
     public UnitFrameConfig PlayerUnitFrame { get; set; } = UnitFrameConfig.PlayerDefault();
     public UnitFrameConfig TargetUnitFrame { get; set; } = UnitFrameConfig.TargetDefault();

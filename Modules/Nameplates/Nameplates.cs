@@ -10,6 +10,7 @@ using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 using SelUI.Game;
 using SelUI.Modules.UnitFrames;
+using SelUI.Rendering;
 using CSCompanion = FFXIVClientStructs.FFXIV.Client.Game.Character.Companion;
 using CSGameObject = FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject;
 using StructsFramework = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework;
@@ -25,7 +26,7 @@ namespace SelUI.Modules.Nameplates;
 public sealed unsafe class Nameplates : IHudModule
 {
     private const int NameplateCount = 50;
-    private const float VerticalOffset = -30f; // screen-px nudge up from the game's nameplate node
+    private const float VerticalOffset = 0f; // constant screen-px nudge from the node anchor (negative = up)
     private const int WallsRaycastFlag = 0x4000; // 0x2000 would also include objects
 
     // Distance-based opacity / scale curves (yalms from the player). Baked tuning; the on/off is the
@@ -36,14 +37,26 @@ public sealed unsafe class Nameplates : IHudModule
     // Non-targeted enemies in combat are dimmed so the targeted enemy stands out (baked, always on).
     private const float EnemyOffTargetAlpha = 0.5f;
 
+    // Per-actor head-height estimate (world yalms above the base), derived from the node and smoothed so
+    // it's stable despite the node's lag. The intrinsic height barely changes, so we can project it live.
+    private const float HeadHeightEma = 0.1f; // smoothing toward the latest derived sample
+    private const float HeadHeightMin = 0.2f, HeadHeightMax = 40f, HeadHeightDefault = 2f;
+
     private readonly ICondition _condition;
     private readonly NameplatesConfig _config;
     private readonly UnitFrame _frame;
     private readonly IGameGui _gameGui;
     private readonly IObjectTable _objects;
+    private readonly RenderScale _scale;
     private readonly ITargetManager _targets;
 
-    public Nameplates(NameplatesConfig config, IObjectTable objects, ITargetManager targets, IGameGui gameGui, ICondition condition, UnitFrame frame)
+    // Smoothed head height per actor, plus the set of actors seen this frame so stale entries are pruned
+    // (these would otherwise leak as actors come and go, like the fade-state map nameplates deliberately avoid).
+    private readonly Dictionary<ulong, float> _headHeights = new();
+    private readonly HashSet<ulong> _seenHeights = new();
+    private readonly List<ulong> _pruneScratch = new();
+
+    public Nameplates(NameplatesConfig config, IObjectTable objects, ITargetManager targets, IGameGui gameGui, ICondition condition, UnitFrame frame, RenderScale scale)
     {
         _config = config;
         _objects = objects;
@@ -51,6 +64,7 @@ public sealed unsafe class Nameplates : IHudModule
         _gameGui = gameGui;
         _condition = condition;
         _frame = frame;
+        _scale = scale;
     }
 
     public string Name => "Nameplates";
@@ -91,6 +105,7 @@ public sealed unsafe class Nameplates : IHudModule
 
         var count = ui3d->NamePlateObjectInfoCount;
         var plates = new List<PlateDraw>(count);
+        _seenHeights.Clear();
         for (var i = 0; i < count; i++)
         {
             var info = ui3d->NamePlateObjectInfoPointers[i].Value;
@@ -130,13 +145,26 @@ public sealed unsafe class Nameplates : IHudModule
                 && !(playerInCombat && InCombat(go)))
                 continue;
 
-            var nameplate = addon->NamePlateObjectArray[info->NamePlateIndex];
-            var root = nameplate.RootComponentNode;
+            // The game's nameplate node gives a correct (model-bounds) position, but its 2D screen coords
+            // refresh only on the game's UI tick — slower than render — so they trail the camera on any
+            // motion (the lateral shift, plus vertical shift on camera-tilt / jumping / slopes). The game's
+            // own plate avoids this by re-projecting in 3D every frame, so we do the same: project the actor
+            // ourselves each frame. WorldToScreen needs a world head height, and GameObject.Height is
+            // 0/garbage for many objects — so we derive the true height from the node (back-projecting its
+            // screen point onto the vertical line through the actor) and smooth it per actor. The height is
+            // intrinsic and ~constant, so the smoothed value is stable even though the node it came from
+            // lags, and projecting it live is lag-free. Fall back to the node only if projection fails.
+            var root = addon->NamePlateObjectArray[info->NamePlateIndex].RootComponentNode;
             if (root == null) continue;
-
-            var screen = new Vector2(
+            var nodeScreen = new Vector2(
                 root->AtkResNode.X + root->AtkResNode.Width / 2f,
                 root->AtkResNode.Y + root->AtkResNode.Height);
+
+            var feet = go.Position;
+            var headHeight = EstimateHeadHeight(go.GameObjectId, feet, nodeScreen, ref camera);
+            var screen = nodeScreen;
+            if (_gameGui.WorldToScreen(feet, out var feetScreen)) screen.X = feetScreen.X;
+            if (_gameGui.WorldToScreen(feet + new Vector3(0f, headHeight, 0f), out var headScreen)) screen.Y = headScreen.Y;
 
             // The target is always shown and ignores occlusion.
             if (!isTarget)
@@ -172,6 +200,16 @@ public sealed unsafe class Nameplates : IHudModule
             var markerIcon = fateMarker != 0 ? fateMarker : gameMarker;
             plates.Add(new PlateDraw(go, cfg, screen, title, titleAbove, alphaMul, dist, isTarget, markerIcon));
             if (isTarget) foundTarget = true;
+        }
+
+        // Drop head-height estimates for actors that no longer have a nameplate (don't leak the map).
+        if (_headHeights.Count > _seenHeights.Count)
+        {
+            _pruneScratch.Clear();
+            foreach (var key in _headHeights.Keys)
+                if (!_seenHeights.Contains(key))
+                    _pruneScratch.Add(key);
+            foreach (var key in _pruneScratch) _headHeights.Remove(key);
         }
 
         // Target had no active native nameplate — draw it anyway via world->screen. Never the local
@@ -230,9 +268,10 @@ public sealed unsafe class Nameplates : IHudModule
     private void DrawPlate(IGameObject go, UnitFrameConfig cfg, Vector2 screen, string? title, bool titleAbove, float alphaMul,
         ImDrawListPtr drawList, uint markerIcon)
     {
-        var origin = new Vector2(screen.X - cfg.Width / 2f, screen.Y + VerticalOffset);
+        // Center the plate on the actor using the *scaled* width (UnitFrame grows the bar by the UI scale).
+        var origin = new Vector2(screen.X - cfg.Width * _scale.Value / 2f, screen.Y + VerticalOffset);
         _frame.Draw($"SelUI_NP{go.GameObjectId}", cfg, go, origin, fade: false, title: title, titleAbove: titleAbove,
-            alphaMultiplier: alphaMul, drawListOverride: drawList, markerIcon: markerIcon);
+            alphaMultiplier: alphaMul, drawListOverride: drawList, markerIcon: markerIcon, anchorBarLine: true);
     }
 
     /// <summary>A nameplate queued for drawing, carrying its player distance so the batch can be depth-sorted.</summary>
@@ -343,6 +382,42 @@ public sealed unsafe class Nameplates : IHudModule
         c.Debuffs.FontSize *= s;
         c.Debuffs.Position *= s;
         return c;
+    }
+
+    /// <summary>
+    ///     Smoothed estimate of an actor's head height (world yalms above its base). Casts the camera ray
+    ///     through the node's head screen point and intersects it with the vertical line through the
+    ///     actor's base — the node's screen position is laggy but its *height* is correct, and height is
+    ///     intrinsic, so an EMA gives a stable value we can then project live each frame without lag.
+    /// </summary>
+    private float EstimateHeadHeight(ulong id, Vector3 feet, Vector2 nodeScreen, ref Camera camera)
+    {
+        _seenHeights.Add(id);
+
+        var ray = camera.ScreenPointToRay(nodeScreen);
+        var origin = new Vector3(ray.Origin.X, ray.Origin.Y, ray.Origin.Z);
+        var dir = new Vector3(ray.Direction.X, ray.Direction.Y, ray.Direction.Z);
+
+        // Closest point on the ray to the actor's vertical axis, solved in the horizontal plane.
+        var measured = float.NaN;
+        var denom = dir.X * dir.X + dir.Z * dir.Z;
+        if (denom > 1e-6f)
+        {
+            var t = ((feet.X - origin.X) * dir.X + (feet.Z - origin.Z) * dir.Z) / denom;
+            if (t > 0f)
+            {
+                var h = origin.Y + t * dir.Y - feet.Y;
+                if (h is > HeadHeightMin and < HeadHeightMax) measured = h;
+            }
+        }
+
+        if (!_headHeights.TryGetValue(id, out var current))
+            current = float.IsNaN(measured) ? HeadHeightDefault : measured;
+        else if (!float.IsNaN(measured))
+            current += (measured - current) * HeadHeightEma;
+
+        _headHeights[id] = current;
+        return current;
     }
 
     // "Full" occlusion against "Walls": two rays (±30px) from the camera through the nameplate point;

@@ -19,6 +19,8 @@ public sealed class ConfigWindow : Window
 {
     private const float FontScaleMin = 0.75f;
     private const float FontScaleMax = 1.5f;
+    private const float UiScaleMin = 0.5f;
+    private const float UiScaleMax = 2.0f;
 
     private readonly Configuration.Configuration _config;
     private readonly EditModeState _editState;
@@ -26,6 +28,7 @@ public sealed class ConfigWindow : Window
     private readonly LabelRenderer _labels;
     private readonly IReadOnlyList<IHudModule> _modules;
     private readonly IDalamudPluginInterface _pluginInterface;
+    private readonly RenderScale _renderScale;
     private readonly UiBuilder _uiBuilder;
 
     private SingleFontChooserDialog? _fontChooser;
@@ -35,6 +38,7 @@ public sealed class ConfigWindow : Window
         IDalamudPluginInterface pluginInterface,
         FontManager fontManager,
         LabelRenderer labels,
+        RenderScale renderScale,
         IReadOnlyList<IHudModule> modules,
         EditModeState editState)
         : base("SelUI Settings###SelUIConfig")
@@ -44,6 +48,7 @@ public sealed class ConfigWindow : Window
         _uiBuilder = (UiBuilder)pluginInterface.UiBuilder;
         _fontManager = fontManager;
         _labels = labels;
+        _renderScale = renderScale;
         _modules = modules;
         _editState = editState;
 
@@ -143,7 +148,18 @@ public sealed class ConfigWindow : Window
             }
         }
 
-        // One global multiplier for all text, in place of per-element size knobs.
+        // Two global multipliers, in place of per-element size knobs: one scales the whole HUD, the
+        // other fine-tunes just the text on top of it.
+        var uiScale = _config.UiScale;
+        ImGui.SetNextItemWidth(220f);
+        if (ImGui.SliderFloat("Overall Scale##uiscale", ref uiScale, UiScaleMin, UiScaleMax, "%.2fx"))
+        {
+            uiScale = Math.Clamp(uiScale, UiScaleMin, UiScaleMax);
+            _config.UiScale = uiScale;
+            _renderScale.Value = uiScale;
+            changed = true;
+        }
+
         var scale = _config.FontScale;
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderFloat("Font Scale##fontscale", ref scale, FontScaleMin, FontScaleMax, "%.2fx"))

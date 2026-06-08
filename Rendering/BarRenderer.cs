@@ -12,16 +12,26 @@ public readonly record struct BarFill(float Fraction, uint Color);
 /// </summary>
 public sealed class BarRenderer
 {
-    /// <summary>Corner radius for every bar.</summary>
+    /// <summary>Corner radius for every bar, at the reference UI scale (scaled per-frame by <see cref="RenderScale" />).</summary>
     public const float Rounding = 12f;
 
     private const int BloomPasses = 8;
     private const float FillOpacity = 0.4f;   // translucent fill
-    private const float BloomReach = 3f;      // glow spread in px (tight)
+    private const float BloomReach = 3f;      // glow spread in px (tight), at the reference UI scale
     private const float BloomIntensity = 0.4f;
     private const float DarkenFactor = 0.55f; // right end of the gradient is this fraction of the bar color
     private const float BgDarken = 0.15f;     // background = the bar color darkened to this brightness
     private const float BgOpacity = 0.5f;     // background opacity
+
+    private readonly RenderScale _scale;
+
+    public BarRenderer(RenderScale scale)
+    {
+        _scale = scale;
+    }
+
+    /// <summary>Corner radius scaled to the current UI scale.</summary>
+    private float ScaledRounding => Rounding * _scale.Value;
 
     public void Draw(
         ImDrawListPtr drawList,
@@ -38,7 +48,8 @@ public sealed class BarRenderer
         // Background is a very dark version of the bar's own color for strong contrast (falls back to
         // the passed color only when there's no fill to derive from).
         var bg = fills.Length > 0 ? ApplyAlpha(Darken(fills[0].Color, BgDarken), BgOpacity) : backgroundColor;
-        drawList.AddRectFilled(pos, pos + size, ApplyAlpha(bg, alpha), Rounding);
+        var rounding = ScaledRounding;
+        drawList.AddRectFilled(pos, pos + size, ApplyAlpha(bg, alpha), rounding);
 
         foreach (var fill in fills)
         {
@@ -53,7 +64,7 @@ public sealed class BarRenderer
         // own color. Drawn crisp over the translucent fill.
         var border = borderOverride != 0 ? borderOverride : fills.Length > 0 ? OpaqueColor(fills[0].Color) : borderColor;
         if (border != 0 && borderThickness > 0f)
-            drawList.AddRect(pos, pos + size, ApplyAlpha(border, alpha), Rounding, ImDrawFlags.None, borderThickness);
+            drawList.AddRect(pos, pos + size, ApplyAlpha(border, alpha), rounding, ImDrawFlags.None, borderThickness * _scale.Value);
     }
 
     /// <summary>Convenience overload for the common single-fill bar.</summary>
@@ -91,20 +102,23 @@ public sealed class BarRenderer
         DrawGlowFill(drawList, fillPos, fillEnd, ApplyAlpha(color, alpha), pos, size);
     }
 
-    private static void DrawGlowFill(ImDrawListPtr drawList, Vector2 fillPos, Vector2 fillEnd, uint baseColor, Vector2 bgPos, Vector2 bgSize)
+    private void DrawGlowFill(ImDrawListPtr drawList, Vector2 fillPos, Vector2 fillEnd, uint baseColor, Vector2 bgPos, Vector2 bgSize)
     {
+        var rounding = ScaledRounding;
+        var bloomReach = BloomReach * _scale.Value;
+
         // Tight outward glow: bloom passes largest/faintest first, tighter/brighter ones layered on top.
         for (var pass = BloomPasses; pass >= 1; pass--)
         {
             var t = (float)pass / BloomPasses;
-            var expand = BloomReach * t;
+            var expand = bloomReach * t;
             var alphaFactor = BloomIntensity * MathF.Exp(-t * 2.5f);
             var bloomColor = ApplyAlpha(baseColor, alphaFactor);
 
             drawList.AddRectFilled(
                 new Vector2(fillPos.X - expand, fillPos.Y - expand),
                 new Vector2(fillEnd.X + expand, fillEnd.Y + expand),
-                bloomColor, Rounding + expand);
+                bloomColor, rounding + expand);
         }
 
         // Translucent left-to-right gradient: bar color -> darker shade.
@@ -118,18 +132,19 @@ public sealed class BarRenderer
     ///     endpoint colors, with a flat gradient strip between them. Only the edges of the fill that
     ///     line up with the bar's bounds get rounded (so a partial bar keeps a square fill front).
     /// </summary>
-    private static void DrawRoundedGradient(ImDrawListPtr drawList, Vector2 fillPos, Vector2 fillEnd, uint left, uint right, Vector2 bgPos, Vector2 bgSize)
+    private void DrawRoundedGradient(ImDrawListPtr drawList, Vector2 fillPos, Vector2 fillEnd, uint left, uint right, Vector2 bgPos, Vector2 bgSize)
     {
         const float eps = 0.5f;
         var bgEnd = bgPos + bgSize;
+        var rounding = ScaledRounding;
 
         var leftAligned = MathF.Abs(fillPos.X - bgPos.X) < eps;
         var rightAligned = MathF.Abs(fillEnd.X - bgEnd.X) < eps;
 
         var width = fillEnd.X - fillPos.X;
         var halfW = width / 2f;
-        var leftInset = leftAligned ? MathF.Min(Rounding, halfW) : 0f;
-        var rightInset = rightAligned ? MathF.Min(Rounding, halfW) : 0f;
+        var leftInset = leftAligned ? MathF.Min(rounding, halfW) : 0f;
+        var rightInset = rightAligned ? MathF.Min(rounding, halfW) : 0f;
 
         // Too narrow for a middle strip: just a single rounded rect in the brighter color.
         if (leftInset + rightInset >= width)
@@ -137,16 +152,16 @@ public sealed class BarRenderer
             var flags = ImDrawFlags.RoundCornersNone;
             if (leftAligned) flags |= ImDrawFlags.RoundCornersLeft;
             if (rightAligned) flags |= ImDrawFlags.RoundCornersRight;
-            drawList.AddRectFilled(fillPos, fillEnd, left, Rounding, flags);
+            drawList.AddRectFilled(fillPos, fillEnd, left, rounding, flags);
             return;
         }
 
         if (leftInset > 0f)
-            drawList.AddRectFilled(fillPos, new Vector2(fillPos.X + leftInset, fillEnd.Y), left, Rounding,
+            drawList.AddRectFilled(fillPos, new Vector2(fillPos.X + leftInset, fillEnd.Y), left, rounding,
                 ImDrawFlags.RoundCornersLeft);
 
         if (rightInset > 0f)
-            drawList.AddRectFilled(new Vector2(fillEnd.X - rightInset, fillPos.Y), fillEnd, right, Rounding,
+            drawList.AddRectFilled(new Vector2(fillEnd.X - rightInset, fillPos.Y), fillEnd, right, rounding,
                 ImDrawFlags.RoundCornersRight);
 
         var midMin = new Vector2(fillPos.X + leftInset, fillPos.Y);
