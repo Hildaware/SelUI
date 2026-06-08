@@ -19,6 +19,7 @@ public sealed class UnitFrame
 {
     private const float CastFontScale = 0.85f;
     private const float TitleFontDrop = 6f; // title (nameplate-only) sits a few px smaller than the name
+    private const float TitleGap = -4f; // name<->title spacing; negative pulls the title in (font carries whitespace)
 
     // Name highlight: the FFXIV item-slot highlight (the "highlight" texture from BetterBags), drawn
     // behind a centered name so name-only nameplates read as more than floating text.
@@ -44,7 +45,7 @@ public sealed class UnitFrame
     private const float RangeFadeWidth = 3f;     // yalms of smooth ramp past the threshold
 
     /// <summary>Dimmed alpha for a frame whose unit is fully out of range (also used by list previews).</summary>
-    public const float OutOfRangeAlpha = 0.3f;
+    public const float OutOfRangeAlpha = 0.35f;
 
     private const uint LeaderIconId = 61521; // party / alliance leader crown, drawn on top of the frame
 
@@ -53,13 +54,14 @@ public sealed class UnitFrame
     private readonly Dictionary<uint, ISharedImmediateTexture> _iconCache = new();
     private readonly LabelRenderer _labels;
     private readonly IObjectTable _objects;
+    private readonly RenderScale _scale;
     private readonly Dictionary<string, FrameState> _states = new();
     private readonly StatusRenderer _statuses;
     private readonly ITextureProvider _textures;
     private ExcelSheet<LuminaAction>? _actionSheet;
     private ISharedImmediateTexture? _nameBgTexture;
 
-    public UnitFrame(BarRenderer bars, LabelRenderer labels, ITextureProvider textures, IDataManager data, StatusRenderer statuses, IObjectTable objects)
+    public UnitFrame(BarRenderer bars, LabelRenderer labels, ITextureProvider textures, IDataManager data, StatusRenderer statuses, IObjectTable objects, RenderScale scale)
     {
         _bars = bars;
         _labels = labels;
@@ -67,6 +69,34 @@ public sealed class UnitFrame
         _data = data;
         _statuses = statuses;
         _objects = objects;
+        _scale = scale;
+    }
+
+    /// <summary>
+    ///     A clone of <paramref name="cfg" /> with its geometry (bar/name/icon pixel sizes and offsets)
+    ///     multiplied by the global UI scale, so a frame grows/shrinks with the game's UI while staying
+    ///     anchored at its (unscaled) <see cref="UnitFrameConfig.Position" />. Font sizes are left raw —
+    ///     <see cref="LabelRenderer" /> applies the UI scale to text itself — as are pure ratios and the
+    ///     status collections (<see cref="StatusRenderer" /> scales those). Returns the original instance
+    ///     unchanged at the reference scale to avoid a needless clone.
+    /// </summary>
+    private UnitFrameConfig ScaleGeometry(UnitFrameConfig cfg)
+    {
+        var s = _scale.Value;
+        if (MathF.Abs(s - 1f) < 0.0001f) return cfg;
+
+        var c = cfg.Clone();
+        c.Width *= s;
+        c.HealthBarHeight *= s;
+        c.ManaBarHeight *= s;
+        c.CastBarHeight *= s;
+        c.Gap *= s;
+        c.JobIconSize *= s;
+        c.JobIconOffsetX *= s;
+        c.NameRightOfIconGap *= s;
+        c.NameOffsetY *= s;
+        c.HealthTextOffsetY *= s;
+        return c;
     }
 
     /// <summary>
@@ -77,6 +107,7 @@ public sealed class UnitFrame
     /// </summary>
     public Vector2 MeasureBoxSize(UnitFrameConfig cfg)
     {
+        cfg = ScaleGeometry(cfg);
         var nameAboveBar = cfg.ShowName && !cfg.NameRightOfIcon;
         var headerH = 0f;
         if (cfg.ShowLevel) headerH = MathF.Max(headerH, _labels.Scale(cfg.LevelFontSize));
@@ -98,8 +129,14 @@ public sealed class UnitFrame
         Action<IGameObject>? onLeftClick = null, Action<IGameObject>? onRightClick = null, Action<IGameObject>? onHover = null,
         PreviewUnit? preview = null, bool drawStatuses = true, bool fade = true, string? title = null, bool titleAbove = false,
         float alphaMultiplier = 1f, ImDrawListPtr? drawListOverride = null, uint markerIcon = 0, Vector3? rangePosition = null,
-        bool leader = false, float leaderIconSize = 0f, Vector2 leaderIconOffset = default)
+        bool leader = false, float leaderIconSize = 0f, Vector2 leaderIconOffset = default, bool anchorBarLine = false,
+        uint colorOverride = 0, uint iconOverride = 0, uint readyCheckIcon = 0)
     {
+        // Grow every baked size with the game's UI scale (positions stay where they're anchored). Hardcoded
+        // pixel pads below go through S(); cfg geometry is pre-scaled here; fonts scale inside LabelRenderer.
+        cfg = ScaleGeometry(cfg);
+        float S(float px) => px * _scale.Value;
+
         var character = actor as ICharacter;
         var battle = actor as IBattleChara;
         var hasHealth = character is { MaxHp: > 0 };
@@ -141,6 +178,10 @@ public sealed class UnitFrame
             else return;
             alpha = 1f;
         }
+
+        // Caller-supplied overrides (e.g. the chocobo companion, which has no player job color/icon of its own).
+        if (colorOverride != 0) snap = snap with { Color = colorOverride };
+        if (iconOverride != 0) snap = snap with { IconOverride = iconOverride };
 
         // Range fade: opt-in frames (party / alliance) dim and stop taking clicks once the unit is past
         // action range. Measured the way the game does — horizontal centre distance minus both hitbox
@@ -203,27 +244,35 @@ public sealed class UnitFrame
 
         var origin = positionOverride ?? cfg.Position;
 
+        // Normally the supplied position is the frame's top-left. Nameplates instead anchor the bar-top
+        // line (hpY) — i.e. the header/bar boundary, which is the name baseline for name-only plates — to
+        // the supplied point, so a label floats above the head while a health bar sits just below it. The
+        // header lift then scales with the name font instead of needing a per-layout constant.
+        if (anchorBarLine) origin.Y -= hpY;
+
         // Name size, measured once (drives icon docking, window bounds, and title placement).
         var hasName = cfg.ShowName && snap.Name.Length > 0;
         var nameSize = hasName ? _labels.Measure(snap.Name, cfg.NameFontSize) : Vector2.Zero;
         var nameLeft = origin.X + cfg.Width / 2f - nameSize.X / 2f; // centered-name left edge
 
         // Job icon: straddle the bar's left edge, or dock to the left of a centered name.
-        var iconShown = cfg.ShowJobIcon && snap.HasJob;
+        var iconShown = cfg.ShowJobIcon && (snap.HasJob || snap.IconOverride != 0);
         var iconLeftX = origin.X - cfg.JobIconSize / 2f + cfg.JobIconOffsetX;
         var iconCenterY = origin.Y + hpY + hpH * cfg.JobIconAnchorY;
         var iconTopLeft = new Vector2(iconLeftX, iconCenterY - cfg.JobIconSize / 2f);
         if (cfg.JobIconLeftOfName && hasName)
         {
             var nameVCenter = origin.Y + hpY - nameSize.Y / 2f; // centered name sits above the baseline
-            iconTopLeft = new Vector2(nameLeft - LabelGap - cfg.JobIconSize + cfg.JobIconOffsetX, nameVCenter - cfg.JobIconSize / 2f);
+            iconTopLeft = new Vector2(nameLeft - S(LabelGap) - cfg.JobIconSize + cfg.JobIconOffsetX, nameVCenter - cfg.JobIconSize / 2f);
         }
+
+        if (cfg.JobIconOffsetY != 0f) iconTopLeft.Y += S(cfg.JobIconOffsetY);
 
         // A name placed right of the icon is left-aligned to here.
         var iconRightX = iconLeftX + cfg.JobIconSize;
         var nameAnchorLeft = (iconShown ? iconRightX : origin.X) + cfg.NameRightOfIconGap;
 
-        const float margin = 12f; // room for the glow-fill bloom to bleed past the bars without clipping
+        var margin = S(12f); // room for the glow-fill bloom to bleed past the bars without clipping
         var top = origin.Y;
         var bottom = origin.Y + totalH;
         var left = origin.X;
@@ -249,9 +298,9 @@ public sealed class UnitFrame
             if (cfg.NameBackground)
             {
                 var bgCx = origin.X + cfg.Width / 2f;
-                var bgHalfW = nameSize.X / 2f + NameBgPadX;
-                var bgCenterY = origin.Y + hpY + cfg.NameOffsetY - nameSize.Y / 2f + NameBgOffsetY;
-                var bgHalfH = nameSize.Y / 2f + NameBgPadY;
+                var bgHalfW = nameSize.X / 2f + S(NameBgPadX);
+                var bgCenterY = origin.Y + hpY + cfg.NameOffsetY - nameSize.Y / 2f + S(NameBgOffsetY);
+                var bgHalfH = nameSize.Y / 2f + S(NameBgPadY);
                 left = MathF.Min(left, bgCx - bgHalfW);
                 right = MathF.Max(right, bgCx + bgHalfW);
                 top = MathF.Min(top, bgCenterY - bgHalfH);
@@ -260,7 +309,7 @@ public sealed class UnitFrame
         }
 
         // A title line above/below the name needs room and may be wider than the bar.
-        if (!string.IsNullOrEmpty(title))
+        if (cfg.ShowName && !string.IsNullOrEmpty(title))
         {
             var titleSize = cfg.NameFontSize - TitleFontDrop;
             var titleH = _labels.Scale(titleSize);
@@ -269,9 +318,9 @@ public sealed class UnitFrame
             left = MathF.Min(left, center - titleW / 2f);
             right = MathF.Max(right, center + titleW / 2f);
             if (titleAbove)
-                top = MathF.Min(top, origin.Y + hpY - nameSize.Y - 2f - titleH);
+                top = MathF.Min(top, origin.Y + hpY - nameSize.Y - S(TitleGap) - titleH);
             else
-                bottom = MathF.Max(bottom, origin.Y + hpY + 2f + titleH);
+                bottom = MathF.Max(bottom, origin.Y + hpY + S(TitleGap) + titleH);
         }
 
         // Leader crown: a small badge over the frame's top-left corner. Drawn on the frame's own draw
@@ -290,7 +339,7 @@ public sealed class UnitFrame
         // Marker badge (e.g. a FATE icon): a small icon centered just above the frame's content.
         var hasMarker = markerIcon != 0;
         var markerSize = _labels.Scale(cfg.NameFontSize * 1.3f);
-        var markerCenter = new Vector2(origin.X + cfg.Width / 2f, top - 2f - markerSize / 2f);
+        var markerCenter = new Vector2(origin.X + cfg.Width / 2f, top - S(2f) - markerSize / 2f);
         if (hasMarker)
         {
             top = MathF.Min(top, markerCenter.Y - markerSize / 2f);
@@ -341,8 +390,8 @@ public sealed class UnitFrame
                 if (cfg.HealthText != HealthTextMode.None)
                 {
                     var (hx, hAnchor) = cfg.HealthTextOnLeft
-                        ? (12f, DrawAnchor.Left)
-                        : (cfg.Width - 4f, DrawAnchor.Right);
+                        ? (S(12f), DrawAnchor.Left)
+                        : (cfg.Width - S(4f), DrawAnchor.Right);
                     _labels.Draw(dl, HealthText(cfg.HealthText, snap.HpCurrent, snap.HpMax),
                         pos + new Vector2(hx, hpH / 2f + cfg.HealthTextOffsetY), fs, cfg.TextColor, hAnchor, alpha: alpha);
                 }
@@ -354,7 +403,7 @@ public sealed class UnitFrame
             {
                 var manaW = cfg.Width * cfg.ManaWidthFactor;
                 var pos = cfg.ManaOverlapHealth
-                    ? new Vector2(origin.X + cfg.Width - manaW - OverlapPad, origin.Y + hpY + hpH - mpH / 2f)
+                    ? new Vector2(origin.X + cfg.Width - manaW - S(OverlapPad), origin.Y + hpY + hpH - mpH / 2f)
                     : new Vector2(origin.X, origin.Y + mpY);
                 var size = new Vector2(manaW, mpH);
                 var frac = snap.MpMax > 0 ? snap.MpCurrent / (float)snap.MpMax : 0f;
@@ -367,7 +416,7 @@ public sealed class UnitFrame
             {
                 var castW = cfg.CastOverlapHealth ? cfg.Width * cfg.CastWidthFactor : cfg.Width;
                 var pos = cfg.CastOverlapHealth
-                    ? new Vector2(origin.X + cfg.Width - castW - OverlapPad, origin.Y + hpY + hpH - castH / 2f)
+                    ? new Vector2(origin.X + cfg.Width - castW - S(OverlapPad), origin.Y + hpY + hpH - castH / 2f)
                     : new Vector2(origin.X, origin.Y + castY);
                 var size = new Vector2(castW, castH);
                 var frac = snap.CastTotal > 0f ? snap.CastCurrent / snap.CastTotal : 0f;
@@ -379,14 +428,14 @@ public sealed class UnitFrame
                 {
                     var name = ActionName(snap.CastActionId);
                     if (name.Length > 0)
-                        _labels.Draw(dl, name, pos + new Vector2(4f, castH / 2f), castFs, cfg.TextColor,
+                        _labels.Draw(dl, name, pos + new Vector2(S(4f), castH / 2f), castFs, cfg.TextColor,
                             DrawAnchor.Left, alpha: alpha);
                 }
 
                 if (!cfg.CastOverlapHealth && cfg.ShowCastTime)
                 {
                     var remaining = MathF.Max(0f, snap.CastTotal - snap.CastCurrent);
-                    _labels.Draw(dl, remaining.ToString("0.0"), pos + new Vector2(cfg.Width - 4f, castH / 2f),
+                    _labels.Draw(dl, remaining.ToString("0.0"), pos + new Vector2(cfg.Width - S(4f), castH / 2f),
                         castFs, cfg.TextColor, DrawAnchor.Right, alpha: alpha);
                 }
             }
@@ -394,7 +443,7 @@ public sealed class UnitFrame
             // Level and name, drawn over the bars so an over-bar name isn't hidden. The name is placed
             // right of the icon, centered over the bar, or left-aligned after the level per config.
             var baseline = origin.Y + hpY;
-            var textLeft = origin.X + LevelPadding;
+            var textLeft = origin.X + S(LevelPadding);
 
             var showLevel = cfg.ShowLevel && snap.Level > 0;
             var levelWidth = showLevel
@@ -412,37 +461,38 @@ public sealed class UnitFrame
                     var nameCx = origin.X + cfg.Width / 2f;
                     if (cfg.NameBackground)
                         DrawNameBackground(dl,
-                            new Vector2(nameCx, baseline + cfg.NameOffsetY - nameSize.Y / 2f + NameBgOffsetY),
-                            nameSize.X + 2f * NameBgPadX, nameSize.Y + 2f * NameBgPadY, alpha);
+                            new Vector2(nameCx, baseline + cfg.NameOffsetY - nameSize.Y / 2f + S(NameBgOffsetY)),
+                            nameSize.X + 2f * S(NameBgPadX), nameSize.Y + 2f * S(NameBgPadY), alpha);
                     _labels.Draw(dl, snap.Name, new Vector2(nameCx, baseline + cfg.NameOffsetY),
                         cfg.NameFontSize, nameColor, DrawAnchor.Bottom, alpha: alpha);
                 }
                 else
                 {
                     // Left-aligned: either above the bar (bottom on the bar top) or centered on the bar top.
-                    var nameX = textLeft + (showLevel ? levelWidth + LabelGap : 0f);
+                    var nameX = textLeft + (showLevel ? levelWidth + S(LabelGap) : 0f);
                     var nameAnchor = cfg.NameOnBarLine ? DrawAnchor.Left : DrawAnchor.BottomLeft;
                     _labels.Draw(dl, snap.Name, new Vector2(nameX, baseline + cfg.NameOffsetY), cfg.NameFontSize, nameColor, nameAnchor, alpha: alpha);
                 }
             }
 
             // Optional title line (pet/minion owner, or a player's title) above or below the name.
-            if (!string.IsNullOrEmpty(title))
+            if (cfg.ShowName && !string.IsNullOrEmpty(title))
             {
                 var titleSize = cfg.NameFontSize - TitleFontDrop;
                 var cx = origin.X + cfg.Width / 2f;
                 if (titleAbove)
-                    _labels.Draw(dl, title, new Vector2(cx, baseline - nameSize.Y - 2f), titleSize, cfg.TitleColor,
+                    _labels.Draw(dl, title, new Vector2(cx, baseline - nameSize.Y - S(TitleGap)), titleSize, cfg.TitleColor,
                         DrawAnchor.Bottom, alpha: alpha);
                 else
-                    _labels.Draw(dl, title, new Vector2(cx, baseline + 2f), titleSize, cfg.TitleColor,
+                    _labels.Draw(dl, title, new Vector2(cx, baseline + S(TitleGap)), titleSize, cfg.TitleColor,
                         DrawAnchor.Top, alpha: alpha);
             }
 
             // Job icon, drawn last so it sits on top of the left of the bars.
             if (iconShown)
             {
-                var wrap = GetIcon(JobIcons.Colored(snap.JobId)).GetWrapOrEmpty();
+                var iconId = snap.IconOverride != 0 ? snap.IconOverride : JobIcons.Colored(snap.JobId);
+                var wrap = GetIcon(iconId).GetWrapOrEmpty();
                 dl.AddImage(wrap.Handle, iconTopLeft, iconTopLeft + new Vector2(cfg.JobIconSize),
                     Vector2.Zero, Vector2.One, Colors.MultiplyAlpha(0xFFFFFFFFu, alpha));
             }
@@ -462,6 +512,17 @@ public sealed class UnitFrame
                 var wrap = GetIcon(LeaderIconId).GetWrapOrEmpty();
                 dl.AddImage(wrap.Handle, leaderTopLeft, leaderTopLeft + new Vector2(leaderIconSize),
                     Vector2.Zero, Vector2.One, Colors.MultiplyAlpha(0xFFFFFFFFu, alpha));
+            }
+
+            // Ready-check mark (check / cross), centered on the health bar during a ready check.
+            if (readyCheckIcon != 0 && hpH > 0f)
+            {
+                var rcSize = hpH * 1.3f;
+                var center = new Vector2(origin.X + cfg.Width / 2f, origin.Y + hpY + hpH / 2f);
+                var tl = center - new Vector2(rcSize / 2f);
+                var wrap = GetIcon(readyCheckIcon).GetWrapOrEmpty();
+                dl.AddImage(wrap.Handle, tl, tl + new Vector2(rcSize), Vector2.Zero, Vector2.One,
+                    Colors.MultiplyAlpha(0xFFFFFFFFu, alpha));
             }
         }
 
@@ -491,13 +552,23 @@ public sealed class UnitFrame
     {
         if (preview != null)
         {
-            _statuses.DrawPreview(id + "_buffs", cfg.Buffs, origin, preview.BuffIcons, alpha);
-            _statuses.DrawPreview(id + "_debuffs", cfg.Debuffs, origin, preview.DebuffIcons, alpha);
+            if (cfg.CombineStatuses)
+                _statuses.DrawCombinedPreview(id + "_statuses", cfg.Debuffs, origin, preview.DebuffIcons, preview.BuffIcons, alpha);
+            else
+            {
+                _statuses.DrawPreview(id + "_buffs", cfg.Buffs, origin, preview.BuffIcons, alpha);
+                _statuses.DrawPreview(id + "_debuffs", cfg.Debuffs, origin, preview.DebuffIcons, alpha);
+            }
         }
         else if (battle != null)
         {
-            _statuses.Draw(id + "_buffs", cfg.Buffs, origin, battle, true, alpha);
-            _statuses.Draw(id + "_debuffs", cfg.Debuffs, origin, battle, false, alpha);
+            if (cfg.CombineStatuses)
+                _statuses.DrawCombined(id + "_statuses", cfg.Debuffs, cfg.Debuffs, cfg.Buffs, origin, battle, alpha);
+            else
+            {
+                _statuses.Draw(id + "_buffs", cfg.Buffs, origin, battle, true, alpha);
+                _statuses.Draw(id + "_debuffs", cfg.Debuffs, origin, battle, false, alpha);
+            }
         }
     }
 
@@ -615,6 +686,7 @@ public sealed class UnitFrame
         int Level,
         uint JobId,
         bool HasJob,
+        uint IconOverride,
         uint HpCurrent,
         uint HpMax,
         byte ShieldPct,
@@ -633,9 +705,10 @@ public sealed class UnitFrame
             const uint hpMax = 100000;
             const uint mpMax = 10000;
             return new Snapshot(
-                p.Name, p.Level, p.JobId, p.JobId != 0,
+                p.Name, p.Level, p.JobId, p.JobId != 0, 0,
                 (uint)(p.HpFraction * hpMax), hpMax, 0,
-                cfg.ShowManaBar, (uint)(p.MpFraction * mpMax), mpMax,
+                cfg.ShowManaBar && (!cfg.ManaHealersOnly || JobRoles.IsHealer(p.JobId)),
+                (uint)(p.MpFraction * mpMax), mpMax,
                 p.Color ?? UnitColors.Job(p.JobId),
                 false, 0f, 0f, 0, false);
         }
@@ -648,10 +721,12 @@ public sealed class UnitFrame
                 character?.Level ?? 0,
                 character?.ClassJob.RowId ?? 0,
                 character is { ClassJob.RowId: > 0 },
+                0,
                 character?.CurrentHp ?? 0,
                 character?.MaxHp ?? 0,
                 character?.ShieldPercentage ?? 0,
-                cfg.ShowManaBar && character is { MaxMp: > 0 },
+                cfg.ShowManaBar && character is { MaxMp: > 0 }
+                    && (!cfg.ManaHealersOnly || JobRoles.IsHealer(character.ClassJob.RowId)),
                 character?.CurrentMp ?? 0,
                 character?.MaxMp ?? 0,
                 UnitColors.ForActor(actor),

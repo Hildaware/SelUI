@@ -53,6 +53,10 @@ public sealed class UnitFrameConfig : ModuleConfig
 
     // Mana bar
     public bool ShowManaBar { get; set; } = true;
+
+    /// <summary>When set, the mana bar only shows for healer jobs (every other job has full but irrelevant MP).</summary>
+    public bool ManaHealersOnly { get; set; }
+
     public float ManaBarHeight { get; set; } = 12f;
     public uint ManaColor { get; set; } = Colors.Mp;
 
@@ -113,6 +117,9 @@ public sealed class UnitFrameConfig : ModuleConfig
     /// <summary>Horizontal nudge of the job icon from its straddle position on the bar's left edge.</summary>
     public float JobIconOffsetX { get; set; }
 
+    /// <summary>Vertical nudge of the job icon (screen px, negative = up). Used by name-less icon plates.</summary>
+    public float JobIconOffsetY { get; set; }
+
     /// <summary>Vertical anchor of the icon's center within the health bar: 0 = top edge, 0.5 = center, 1 = bottom.</summary>
     public float JobIconAnchorY { get; set; } = 0.5f;
 
@@ -121,6 +128,13 @@ public sealed class UnitFrameConfig : ModuleConfig
     // are applied on every load (see Plugin).
     [JsonIgnore] public StatusListConfig Buffs { get; set; } = new();
     [JsonIgnore] public StatusListConfig Debuffs { get; set; } = new();
+
+    /// <summary>
+    ///     Draw buffs and debuffs as a single continuous grid (debuffs first, then buffs) using the
+    ///     <see cref="Debuffs" /> collection's layout. The <see cref="Buffs" /> layout is ignored; only its
+    ///     filters (e.g. own-only) still apply. Baked per-frame — see <see cref="PartyRowDefault" />.
+    /// </summary>
+    public bool CombineStatuses { get; set; }
 
     // Shared appearance
     public uint BackgroundColor { get; set; } = Colors.BarBackground;
@@ -165,6 +179,7 @@ public sealed class UnitFrameConfig : ModuleConfig
             ManaBarHeight = 8f,
             ManaWidthFactor = 0.75f,
             ManaOverlapHealth = true,
+            ManaHealersOnly = true, // non-healers' MP is irrelevant — only show it for healers
             ShowCastBar = false,
             ShowLevel = false,
             NameCentered = false,
@@ -176,7 +191,8 @@ public sealed class UnitFrameConfig : ModuleConfig
             JobIconOffsetX = 4f,
             JobIconAnchorY = 0f,
             HideWhenNoActor = false,
-            RangeFade = true // dim party members you can't reach (heals/buffs ~30y)
+            RangeFade = true, // dim party members you can't reach (heals/buffs ~30y)
+            CombineStatuses = true // debuffs then buffs in one grid, to the right of the bar
         };
     }
 

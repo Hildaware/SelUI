@@ -30,6 +30,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly HudManager _hudManager;
     private readonly MouseoverManager _mouseover;
     private readonly IDalamudPluginInterface _pluginInterface;
+    private readonly RenderScale _renderScale;
     private readonly WindowSystem _windowSystem;
 
     public Plugin(
@@ -39,6 +40,7 @@ public sealed class Plugin : IDalamudPlugin
         IObjectTable objectTable,
         ITargetManager targetManager,
         IPartyList partyList,
+        IBuddyList buddyList,
         ICondition condition,
         IGameGui gameGui,
         ITextureProvider textureProvider,
@@ -75,10 +77,10 @@ public sealed class Plugin : IDalamudPlugin
             config.Save(pluginInterface);
         }
 
-        // One-time default: party frame spacing widened to 64 (existing configs predate the new default).
+        // One-time default: reset party frame spacing to the baked default (existing configs predate it).
         if (config.Version < 10)
         {
-            config.PartyFrames.RowHeight = 64f;
+            config.PartyFrames.RowHeight = 36f;
             config.Version = 10;
             config.Save(pluginInterface);
         }
@@ -109,13 +111,15 @@ public sealed class Plugin : IDalamudPlugin
         config.EnemyList.Row.Buffs = StatusLayouts.EnemyBuffs();
         config.EnemyList.Row.Debuffs = StatusLayouts.EnemyDebuffs();
 
-        // Rendering foundation.
+        // Rendering foundation. RenderScale is the user's global "Overall Scale" multiplier on every
+        // baked size, seeded from the saved config and updated live from the slider in the config window.
+        _renderScale = new RenderScale { Value = config.UiScale };
         _fontManager = new FontManager(pluginInterface);
         _fontManager.ActiveBundledFont = config.BundledFont ?? FontManager.DefaultBundledFont;
-        var labels = new LabelRenderer(_fontManager) { GlobalFont = config.Font, GlobalScale = config.FontScale };
-        var bars = new BarRenderer();
-        var statuses = new StatusRenderer(labels, textureProvider, objectTable);
-        var unitFrame = new UnitFrame(bars, labels, textureProvider, dataManager, statuses, objectTable);
+        var labels = new LabelRenderer(_fontManager, _renderScale) { GlobalFont = config.Font, GlobalScale = config.FontScale };
+        var bars = new BarRenderer(_renderScale);
+        var statuses = new StatusRenderer(labels, textureProvider, objectTable, _renderScale);
+        var unitFrame = new UnitFrame(bars, labels, textureProvider, dataManager, statuses, objectTable, _renderScale);
         _mouseover = new MouseoverManager();
 
         // Sample status icons for the party preview: a few real buffs and a few cleansable debuffs.
@@ -135,22 +139,22 @@ public sealed class Plugin : IDalamudPlugin
                 inCombat: () => objectTable.LocalPlayer?.StatusFlags.HasFlag(StatusFlags.InCombat) ?? false,
                 markerProvider: FateHelper.MarkerFor,
                 appearanceConfigurable: false),
-            new PlayerCastBar(config.CastBar, () => objectTable.LocalPlayer as IBattleChara, bars, labels, textureProvider, dataManager, gameGui, addonLifecycle),
-            new PartyFrames(config.PartyFrames, partyList, objectTable, targetManager, _mouseover, unitFrame,
-                mockBuffIcons, mockDebuffIcons),
-            new AllianceFrames(config.Alliance, partyList, unitFrame),
+            new PlayerCastBar(config.CastBar, () => objectTable.LocalPlayer as IBattleChara, bars, labels, textureProvider, dataManager, gameGui, addonLifecycle, _renderScale),
+            new PartyFrames(config.PartyFrames, partyList, buddyList, objectTable, targetManager, _mouseover, unitFrame,
+                mockBuffIcons, mockDebuffIcons, _renderScale),
+            new AllianceFrames(config.Alliance, partyList, unitFrame, labels, _renderScale),
             new EnemyList(config.EnemyList, new EnemyListHelper(gameGui), objectTable, targetManager, _mouseover,
-                unitFrame, textureProvider, mockDebuffIcons),
-            new Nameplates(config.Nameplates, objectTable, targetManager, gameGui, condition, unitFrame)
+                unitFrame, textureProvider, mockDebuffIcons, _renderScale),
+            new Nameplates(config.Nameplates, objectTable, targetManager, gameGui, condition, unitFrame, _renderScale)
         };
 
-        _hudManager = new HudManager(modules, () => config.Enabled, clientState, log);
+        _hudManager = new HudManager(modules, () => config.Enabled, clientState, condition, log);
 
         var editState = new EditModeState();
         _editOverlay = new EditModeOverlay(modules.OfType<IMovableModule>().ToList(), labels, editState,
             () => config.Save(pluginInterface));
 
-        _configWindow = new ConfigWindow(config, pluginInterface, _fontManager, labels, _hudManager.Modules, editState);
+        _configWindow = new ConfigWindow(config, pluginInterface, _fontManager, labels, _renderScale, _hudManager.Modules, editState);
         _windowSystem = new WindowSystem("SelUI");
         _windowSystem.AddWindow(_configWindow);
 

@@ -10,7 +10,7 @@ public sealed class PartyFramesConfig : ModuleConfig
     public Vector2 Position { get; set; } = new(40f, 320f);
 
     /// <summary>Vertical pitch between rows (spacing between party frames).</summary>
-    public float RowHeight { get; set; } = 64f;
+    public float RowHeight { get; set; } = 36f;
 
     /// <summary>Stack rows upward from <see cref="Position" /> instead of downward.</summary>
     public bool GrowUp { get; set; }

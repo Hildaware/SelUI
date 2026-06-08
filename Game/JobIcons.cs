@@ -9,6 +9,9 @@ public static class JobIcons
 {
     private const uint FramedBase = 62100;
 
+    /// <summary>Icon shown for the player's chocobo companion (it has no player job icon of its own).</summary>
+    public const uint Chocobo = 60311;
+
     // ClassJob row id -> colorful gradient icon id.
     private static readonly Dictionary<uint, uint> Colorful = new()
     {

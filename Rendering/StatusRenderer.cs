@@ -15,27 +15,57 @@ namespace SelUI.Rendering;
 /// </summary>
 public sealed class StatusRenderer
 {
-    private const float Gap = 4f;
+    private const float Gap = 4f; // gap between status icons, at the reference UI scale
 
     private readonly Dictionary<uint, ISharedImmediateTexture> _iconCache = new();
     private readonly LabelRenderer _labels;
     private readonly IObjectTable _objects;
+    private readonly RenderScale _scale;
     private readonly ITextureProvider _textures;
 
-    public StatusRenderer(LabelRenderer labels, ITextureProvider textures, IObjectTable objects)
+    public StatusRenderer(LabelRenderer labels, ITextureProvider textures, IObjectTable objects, RenderScale scale)
     {
         _labels = labels;
         _textures = textures;
         _objects = objects;
+        _scale = scale;
     }
 
     public void Draw(string id, StatusListConfig cfg, Vector2 frameOrigin, IBattleChara battle, bool buffs, float alpha)
     {
         if (!cfg.Enabled) return;
 
-        var me = _objects.LocalPlayer;
-        var myObjectId = me?.GameObjectId ?? 0;
-        var myEntityId = me?.EntityId ?? 0;
+        var items = Collect(cfg, battle, buffs);
+        if (items.Count == 0) return;
+
+        if (items.Count > cfg.MaxIcons) items.RemoveRange(cfg.MaxIcons, items.Count - cfg.MaxIcons);
+        RenderItems(id, cfg, frameOrigin, items, true, _objects.LocalPlayer?.EntityId ?? 0, alpha);
+    }
+
+    /// <summary>
+    ///     Draw debuffs and buffs as one continuous grid (debuffs first), laid out with <paramref name="layout" />.
+    ///     Each group keeps its own filters (<paramref name="debuffs" /> / <paramref name="buffs" />) and is sorted
+    ///     by remaining time; the window is interactive so your own buffs stay right-click-cancellable.
+    /// </summary>
+    public void DrawCombined(string id, StatusListConfig layout, StatusListConfig debuffs, StatusListConfig buffs,
+        Vector2 frameOrigin, IBattleChara battle, float alpha)
+    {
+        if (!layout.Enabled) return;
+
+        var items = Collect(debuffs, battle, false);
+        items.AddRange(Collect(buffs, battle, true));
+        if (items.Count == 0) return;
+
+        if (items.Count > layout.MaxIcons) items.RemoveRange(layout.MaxIcons, items.Count - layout.MaxIcons);
+        RenderItems(id, layout, frameOrigin, items, true, _objects.LocalPlayer?.EntityId ?? 0, alpha);
+    }
+
+    /// <summary>Filtered, sorted status items for one category. Caller applies the icon cap and renders.</summary>
+    private List<Item> Collect(StatusListConfig cfg, IBattleChara battle, bool buffs)
+    {
+        if (!cfg.Enabled) return new List<Item>();
+
+        var myObjectId = _objects.LocalPlayer?.GameObjectId ?? 0;
 
         var items = new List<Item>();
         foreach (var status in battle.StatusList)
@@ -51,16 +81,13 @@ public sealed class StatusRenderer
             var stacks = data.MaxStacks > 0 && status.Param > 0 ? status.Param : 0;
             // Cropped icons use the base art (stacks shown as text); uncropped use the per-stack icon.
             var iconId = cfg.CropIcon ? data.Icon : (uint)(data.Icon + Math.Max(0, stacks - 1));
-            items.Add(new Item(iconId, status.RemainingTime, stacks, status.StatusId, mine));
+            items.Add(new Item(iconId, status.RemainingTime, stacks, status.StatusId, mine, buffs,
+                data.Name.ExtractText(), data.Description.ExtractText()));
         }
-
-        if (items.Count == 0) return;
 
         // Sort by remaining time (soonest first); permanent / no-timer statuses go last.
         items.Sort((a, b) => SortKey(a.Time).CompareTo(SortKey(b.Time)));
-        if (items.Count > cfg.MaxIcons) items.RemoveRange(cfg.MaxIcons, items.Count - cfg.MaxIcons);
-
-        RenderItems(id, cfg, frameOrigin, items, buffs, myEntityId, alpha);
+        return items;
     }
 
     /// <summary>Mock-data path for config previews: draws the given icon ids with placeholder timers.</summary>
@@ -70,15 +97,34 @@ public sealed class StatusRenderer
 
         var items = new List<Item>();
         for (var i = 0; i < iconIds.Count && i < cfg.MaxIcons; i++)
-            items.Add(new Item(iconIds[i], MathF.Max(1f, 30f - i * 4f), 0, 0, false));
+            items.Add(new Item(iconIds[i], MathF.Max(1f, 30f - i * 4f), 0, 0, false, false, string.Empty, string.Empty));
 
         RenderItems(id, cfg, frameOrigin, items, false, 0, alpha);
     }
 
-    private void RenderItems(string id, StatusListConfig cfg, Vector2 frameOrigin, List<Item> items, bool interactive, uint myEntityId, float alpha)
+    /// <summary>Mock-data path for the combined buffs+debuffs grid (debuffs first), for config previews.</summary>
+    public void DrawCombinedPreview(string id, StatusListConfig layout, Vector2 frameOrigin,
+        IReadOnlyList<uint> debuffIcons, IReadOnlyList<uint> buffIcons, float alpha)
     {
-        var size = cfg.IconSize;
-        var step = size + Gap;
+        if (!layout.Enabled) return;
+
+        var items = new List<Item>();
+        foreach (var icon in debuffIcons) items.Add(new Item(icon, 0f, 0, 0, false, false, string.Empty, string.Empty));
+        foreach (var icon in buffIcons) items.Add(new Item(icon, 0f, 0, 0, false, true, string.Empty, string.Empty));
+        if (items.Count == 0) return;
+
+        if (items.Count > layout.MaxIcons) items.RemoveRange(layout.MaxIcons, items.Count - layout.MaxIcons);
+        // Re-time so the preview shows a descending countdown across the whole grid.
+        for (var i = 0; i < items.Count; i++) items[i] = items[i] with { Time = MathF.Max(1f, 30f - i * 4f) };
+
+        RenderItems(id, layout, frameOrigin, items, false, 0, alpha);
+    }
+
+    private void RenderItems(string id, StatusListConfig cfg, Vector2 frameOrigin, List<Item> items, bool input, uint myEntityId, float alpha)
+    {
+        var v = _scale.Value;
+        var size = cfg.IconSize * v;
+        var step = size + Gap * v;
         var perLine = Math.Max(1, cfg.PerLine);
 
         var positions = new Vector2[items.Count];
@@ -89,7 +135,7 @@ public sealed class StatusRenderer
             var row = i / perLine;
             var dx = cfg.GrowRight ? col * step : -col * step;
             var dy = cfg.GrowDown ? row * step : -row * step;
-            var p = frameOrigin + cfg.Position + new Vector2(dx, dy);
+            var p = frameOrigin + cfg.Position * v + new Vector2(dx, dy);
             positions[i] = p;
             minX = MathF.Min(minX, p.X);
             minY = MathF.Min(minY, p.Y);
@@ -99,12 +145,15 @@ public sealed class StatusRenderer
 
         // Extra right/bottom room so the timer (larger, anchored on each icon's bottom-right corner)
         // isn't clipped by the window.
-        var overflow = _labels.Scale(cfg.FontSize) + 6f;
-        var winPos = new Vector2(minX - 4f, minY - 4f);
-        var winSize = new Vector2(maxX - minX + 4f + overflow, maxY - minY + 4f + overflow);
+        var overflow = _labels.Scale(cfg.FontSize) + 6f * v;
+        var pad = 4f * v;
+        var winPos = new Vector2(minX - pad, minY - pad);
+        var winSize = new Vector2(maxX - minX + pad + overflow, maxY - minY + pad + overflow);
 
-        DrawHelper.DrawInWindow(id, winPos, winSize, interactive, dl =>
+        DrawHelper.DrawInWindow(id, winPos, winSize, input, dl =>
         {
+            var windowHovered = input && ImGui.IsWindowHovered();
+
             for (var i = 0; i < items.Count; i++)
             {
                 var item = items[i];
@@ -120,17 +169,33 @@ public sealed class StatusRenderer
                 // Timer: right-justified, anchored to the icon's bottom-right corner, and a touch
                 // larger than the rest of the status text.
                 if (cfg.ShowDuration && item.Time > 0f)
-                    _labels.Draw(dl, FormatDuration(item.Time), pos + new Vector2(size + 4f, size),
+                    _labels.Draw(dl, FormatDuration(item.Time), pos + new Vector2(size + 4f * v, size),
                         cfg.FontSize + 4f, Colors.White, DrawAnchor.Right, alpha: alpha);
 
                 if (cfg.ShowStacks && item.Stacks > 1)
                     _labels.Draw(dl, item.Stacks.ToString(), new Vector2(pos.X + size, pos.Y),
                         cfg.FontSize, Colors.White, DrawAnchor.TopRight, alpha: alpha);
 
+                if (!windowHovered || !ImGui.IsMouseHoveringRect(pos, pos + new Vector2(size))) continue;
+
+                // Tooltip (name + description) at the cursor for any status with game data.
+                if (item.Name.Length > 0)
+                {
+                    ImGui.BeginTooltip();
+                    ImGui.TextUnformatted(item.Name);
+                    if (item.Description.Length > 0)
+                    {
+                        ImGui.Separator();
+                        ImGui.PushTextWrapPos(ImGui.GetFontSize() * 20f);
+                        ImGui.TextUnformatted(item.Description);
+                        ImGui.PopTextWrapPos();
+                    }
+
+                    ImGui.EndTooltip();
+                }
+
                 // Right-click to cancel your own buffs.
-                if (interactive && item.Mine && myEntityId != 0 &&
-                    ImGui.IsWindowHovered() && ImGui.IsMouseHoveringRect(pos, pos + new Vector2(size)) &&
-                    ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+                if (item.Buff && item.Mine && myEntityId != 0 && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
                     StatusManager.ExecuteStatusOff(item.StatusId, myEntityId);
             }
         });
@@ -156,5 +221,5 @@ public sealed class StatusRenderer
         return tex;
     }
 
-    private readonly record struct Item(uint Icon, float Time, int Stacks, uint StatusId, bool Mine);
+    private readonly record struct Item(uint Icon, float Time, int Stacks, uint StatusId, bool Mine, bool Buff, string Name, string Description);
 }

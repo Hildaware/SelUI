@@ -14,6 +14,7 @@ public static class UnitColors
     public static readonly uint Friendly = Colors.Rgba(99, 172, 14);
     public static readonly uint Hostile = Colors.Rgba(233, 4, 4);
     public static readonly uint Neutral = Colors.Rgba(218, 157, 46);
+    public static readonly uint Chocobo = Colors.Rgba(245, 205, 60); // warm gold for the chocobo companion
 
     // ClassJob row id -> color. Ported from BetterBags' JobColors.
     private static readonly Dictionary<byte, Vector4> JobMap = new()
@@ -65,10 +66,8 @@ public static class UnitColors
     {
         if (actor is not ICharacter character) return Neutral;
 
-        // Players (and the player's chocobo companion) use job color.
-        if (character.ObjectKind == ObjectKind.Pc ||
-            (character.SubKind == 9 && character.ClassJob.RowId > 0))
-            return Job(character.ClassJob.RowId);
+        // Players use job color (the chocobo companion's gold is applied via UnitFrame's color override).
+        if (character.ObjectKind == ObjectKind.Pc) return Job(character.ClassJob.RowId);
 
         var hostile = IsHostile(actor);
 

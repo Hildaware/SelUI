@@ -38,14 +38,14 @@ public static class StatusLayouts
     }
 
     // --- Party row ---
+    // The party row uses UnitFrameConfig.CombineStatuses: debuffs and buffs render as one grid using the
+    // PartyDebuffs layout (to the right of the bar). So PartyBuffs only contributes its *filter* (own-only) —
+    // its Position/size/growth are ignored in combine mode.
     public static StatusListConfig PartyBuffs()
     {
-        // Only my buffs, anchored to the bottom-right of the 240-wide / 20-tall health bar, growing left.
         return new StatusListConfig
         {
             OwnOnly = true,
-            Position = new Vector2(240f - 24f - 4f, 28f),
-            GrowRight = false,
             IconSize = 24f,
             PerLine = 12,
             FontSize = 10f
