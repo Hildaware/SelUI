@@ -174,10 +174,10 @@ public sealed class UnitFrameConfig : ModuleConfig
         return new UnitFrameConfig
         {
             Width = 240f,
-            HealthBarHeight = 20f,
+            HealthBarHeight = 18f,
             HealthText = HealthTextMode.None,
             ManaBarHeight = 8f,
-            ManaWidthFactor = 0.75f,
+            ManaWidthFactor = 0.65f,
             ManaOverlapHealth = true,
             ManaHealersOnly = true, // non-healers' MP is irrelevant — only show it for healers
             ShowCastBar = false,

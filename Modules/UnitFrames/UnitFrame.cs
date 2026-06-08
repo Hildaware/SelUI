@@ -37,6 +37,7 @@ public sealed class UnitFrame
     private const float LabelGap = 6f;      // horizontal gap between the level and the name
     private const float LevelPadding = 16f; // gap between the bar's left edge and the level text
     private const float OverlapPad = 6f; // right padding when a bar (mana / cast) overlaps the health bar
+    private const float ManaOverlapPad = 10f; // mana sits 4px further left than the cast bar when overlapping
     private const float FadeDuration = 0.25f; // seconds to fade a frame fully in or out
 
     // Range fade (opt-in via UnitFrameConfig.RangeFade): once the actor is past action range the frame
@@ -403,7 +404,7 @@ public sealed class UnitFrame
             {
                 var manaW = cfg.Width * cfg.ManaWidthFactor;
                 var pos = cfg.ManaOverlapHealth
-                    ? new Vector2(origin.X + cfg.Width - manaW - S(OverlapPad), origin.Y + hpY + hpH - mpH / 2f)
+                    ? new Vector2(origin.X + cfg.Width - manaW - S(ManaOverlapPad), origin.Y + hpY + hpH - mpH / 2f)
                     : new Vector2(origin.X, origin.Y + mpY);
                 var size = new Vector2(manaW, mpH);
                 var frac = snap.MpMax > 0 ? snap.MpCurrent / (float)snap.MpMax : 0f;
