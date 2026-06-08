@@ -21,7 +21,8 @@ public static class NameplateClassifier
             case ObjectKind.BattleNpc:
                 if (obj is IBattleNpc npc)
                 {
-                    if (npc.BattleNpcKind is BattleNpcSubKind.Pet)
+                    // Buddy = the player's chocobo companion; treat it like a pet (owner-name title).
+                    if (npc.BattleNpcKind is BattleNpcSubKind.Pet or BattleNpcSubKind.Buddy)
                         return NameplateType.Pet;
                     if (npc.BattleNpcKind is BattleNpcSubKind.Combatant or BattleNpcSubKind.BNpcPart)
                         return NameplateType.Enemy;
