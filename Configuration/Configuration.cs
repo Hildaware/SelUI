@@ -7,6 +7,7 @@ using SelUI.Modules.CastBar;
 using SelUI.Modules.EnemyList;
 using SelUI.Modules.Nameplates;
 using SelUI.Modules.Party;
+using SelUI.Modules.Statuses;
 using SelUI.Modules.UnitFrames;
 
 namespace SelUI.Configuration;
@@ -40,6 +41,7 @@ public sealed class Configuration : IPluginConfiguration
     public UnitFrameConfig PlayerUnitFrame { get; set; } = UnitFrameConfig.PlayerDefault();
     public UnitFrameConfig TargetUnitFrame { get; set; } = UnitFrameConfig.TargetDefault();
     public CastBarConfig CastBar { get; set; } = new();
+    public PlayerStatusesConfig PlayerStatuses { get; set; } = new();
     public PartyFramesConfig PartyFrames { get; set; } = new();
     public AllianceFramesConfig Alliance { get; set; } = new();
     public EnemyListConfig EnemyList { get; set; } = new();

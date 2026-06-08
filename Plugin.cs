@@ -12,6 +12,7 @@ using SelUI.Modules.CastBar;
 using SelUI.Modules.EnemyList;
 using SelUI.Modules.Nameplates;
 using SelUI.Modules.Party;
+using SelUI.Modules.Statuses;
 using SelUI.Modules.UnitFrames;
 using SelUI.Rendering;
 using SelUI.UI;
@@ -70,12 +71,23 @@ public sealed class Plugin : IDalamudPlugin
         bakedTarget.HideInCombat = config.TargetUnitFrame.HideInCombat;
         config.TargetUnitFrame = bakedTarget;
 
+        // The player frame's appearance is baked too; only its placement and width stay user state, so
+        // re-apply the baked defaults around those on every load.
+        var bakedPlayer = UnitFrameConfig.PlayerDefault();
+        bakedPlayer.Position = config.PlayerUnitFrame.Position;
+        bakedPlayer.Width = config.PlayerUnitFrame.Width;
+        bakedPlayer.HideOutOfCombat = config.PlayerUnitFrame.HideOutOfCombat;
+        bakedPlayer.HideWhenFullHealth = config.PlayerUnitFrame.HideWhenFullHealth;
+        config.PlayerUnitFrame = bakedPlayer;
+
         // The cast bar's size/look is baked; only its position (and enable toggle) stay user state.
         config.CastBar = new CastBarConfig { Position = config.CastBar.Position, Enabled = config.CastBar.Enabled };
 
         // Status layouts are baked design, not user config — apply them from code on every load.
-        config.PlayerUnitFrame.Buffs = StatusLayouts.PlayerBuffs();
-        config.PlayerUnitFrame.Debuffs = StatusLayouts.PlayerDebuffs();
+        // The player's buffs/debuffs are their own module now (PlayerStatuses), so keep them off the
+        // player frame (otherwise they'd draw twice).
+        config.PlayerUnitFrame.Buffs = new StatusListConfig { Enabled = false };
+        config.PlayerUnitFrame.Debuffs = new StatusListConfig { Enabled = false };
         config.TargetUnitFrame.Buffs = StatusLayouts.TargetBuffs();
         config.TargetUnitFrame.Debuffs = StatusLayouts.TargetDebuffs();
         config.PartyFrames.Row.Buffs = StatusLayouts.PartyBuffs();
@@ -102,7 +114,13 @@ public sealed class Plugin : IDalamudPlugin
         var modules = new List<IHudModule>
         {
             new UnitFrameModule("Player Frame", "SelUI_Player", config.PlayerUnitFrame,
-                () => objectTable.LocalPlayer, unitFrame),
+                () => objectTable.LocalPlayer, unitFrame,
+                onLeftClick: actor => targetManager.Target = actor,
+                onRightClick: UnitInteraction.OpenContextMenu,
+                onHover: _mouseover.SetHovered,
+                inCombat: () => ActorState.InCombat(objectTable.LocalPlayer),
+                appearanceConfigurable: false,
+                hideOptions: FrameHideOptions.OutOfCombat | FrameHideOptions.FullHealth),
             new UnitFrameModule("Target Frame", "SelUI_Target", config.TargetUnitFrame,
                 () => targetManager.Target, unitFrame,
                 onLeftClick: actor => targetManager.Target = actor,
@@ -110,8 +128,11 @@ public sealed class Plugin : IDalamudPlugin
                 onHover: _mouseover.SetHovered,
                 inCombat: () => ActorState.InCombat(objectTable.LocalPlayer),
                 markerProvider: FateHelper.MarkerFor,
-                appearanceConfigurable: false),
+                appearanceConfigurable: false,
+                hideOptions: FrameHideOptions.InCombat),
             new PlayerCastBar(config.CastBar, () => objectTable.LocalPlayer as IBattleChara, bars, labels, textureProvider, dataManager, gameGui, addonLifecycle, _renderScale),
+            new PlayerStatuses(config.PlayerStatuses, () => objectTable.LocalPlayer as IBattleChara, statuses,
+                StatusLayouts.PlayerPermanentStatuses(), StatusLayouts.PlayerBuffs(), StatusLayouts.PlayerDebuffs(), _renderScale),
             new PartyFrames(config.PartyFrames, partyList, buddyList, objectTable, targetManager, _mouseover, unitFrame,
                 mockBuffIcons, mockDebuffIcons, _renderScale),
             new AllianceFrames(config.Alliance, partyList, unitFrame, labels, _renderScale),
@@ -125,8 +146,13 @@ public sealed class Plugin : IDalamudPlugin
         _hudManager = new HudManager(modules, () => config.Enabled, clientState, condition, log);
 
         var editState = new EditModeState();
-        _editOverlay = new EditModeOverlay(modules.OfType<IMovableModule>().ToList(), labels, editState,
-            () => config.Save(pluginInterface));
+
+        // Movable edit boxes: every IMovableModule, plus any sub-boxes a module hosts (the Statuses
+        // module places its buffs and debuffs grids independently).
+        var movables = modules.OfType<IMovableModule>()
+            .Concat(modules.OfType<IMovableModuleHost>().SelectMany(h => h.MovableParts))
+            .ToList();
+        _editOverlay = new EditModeOverlay(movables, labels, editState, () => config.Save(pluginInterface));
 
         _configWindow = new ConfigWindow(config, pluginInterface, _fontManager, labels, _renderScale, _hudManager.Modules, editState);
         _windowSystem = new WindowSystem("SelUI");
