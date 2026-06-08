@@ -48,7 +48,7 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>TEMPORARY: the visual bar-tuner dev tool. Additive — remove with the BarBuilder module.</summary>
     public BarBuilderConfig BarBuilder { get; set; } = new();
 
-    public int Version { get; set; } = 11;
+    public int Version { get; set; } = 1;
 
     public void Save(IDalamudPluginInterface pi)
     {

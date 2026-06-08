@@ -54,45 +54,9 @@ public sealed class Plugin : IDalamudPlugin
 
         var config = pluginInterface.GetPluginConfig() as Configuration.Configuration ?? new Configuration.Configuration();
 
-        // Party frames are still being designed; reset their (auto-generated) config so new defaults apply.
-        if (config.Version < 7)
-        {
-            config.PartyFrames = new PartyFramesConfig();
-            config.Version = 7;
-            config.Save(pluginInterface);
-        }
-
-        // One-time default: hide the target frame in combat (existing configs predate the flag).
-        if (config.Version < 8)
-        {
-            config.TargetUnitFrame.HideInCombat = true;
-            config.Version = 8;
-            config.Save(pluginInterface);
-        }
-
-        // One-time default: the player cast bar is now its own module, so drop the inline one.
-        if (config.Version < 9)
-        {
-            config.PlayerUnitFrame.ShowCastBar = false;
-            config.Version = 9;
-            config.Save(pluginInterface);
-        }
-
-        // One-time default: reset party frame spacing to the baked default (existing configs predate it).
-        if (config.Version < 10)
-        {
-            config.PartyFrames.RowHeight = 36f;
-            config.Version = 10;
-            config.Save(pluginInterface);
-        }
-
-        // One-time default: push the new enemy-list row spacing (still user-adjustable afterward).
-        if (config.Version < 11)
-        {
-            config.EnemyList.RowHeight = 54f;
-            config.Version = 11;
-            config.Save(pluginInterface);
-        }
+        // Pre-release: config is still at v1, so there are no released versions to migrate from. Add
+        // `if (config.Version < N)` one-time-default blocks here once we ship and need to nudge persisted
+        // state on existing installs.
 
         // Row appearance for the list frames is baked design, not user config — re-apply from code on
         // every load (the module Position/spacing stays user-configurable on the parent config).
