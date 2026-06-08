@@ -7,16 +7,46 @@ namespace SelUI.Modules.UnitFrames;
 /// </summary>
 public static class StatusLayouts
 {
-    // --- Player ---
+    // --- Player (the standalone Statuses module) ---
+    // These give only the grid look + filter; the on-screen anchor is the module's own (user) position,
+    // so Position stays at the origin here. Buffs are split by remaining time into a long "permanent"
+    // grid and a short regular-buffs grid; debuffs aren't split.
+    public static StatusListConfig PlayerPermanentStatuses()
+    {
+        // Long-running "permanent"-ish buffs — food, FC actions, etc. (over 5 min, or timerless).
+        return new StatusListConfig
+        {
+            Duration = DurationFilter.LongOnly,
+            IconSize = 30f,
+            PerLine = 16,
+            MaxIcons = 20,
+            FontSize = 12f
+        };
+    }
+
     public static StatusListConfig PlayerBuffs()
     {
-        return new StatusListConfig { Position = new Vector2(0f, -72f) };
+        // Regular (short) buffs — under 5 min. The long-running ones move to the Permanent grid.
+        return new StatusListConfig
+        {
+            Duration = DurationFilter.ShortOnly,
+            IconSize = 30f,
+            PerLine = 16,
+            MaxIcons = 20,
+            FontSize = 12f
+        };
     }
 
     public static StatusListConfig PlayerDebuffs()
     {
-        // Debuffs on yourself come from enemies, so don't restrict to "mine".
-        return new StatusListConfig { Position = new Vector2(0f, 54f) };
+        // Debuffs on yourself come from enemies, so show all, not just the ones you applied.
+        return new StatusListConfig
+        {
+            IconSize = 30f,
+            PerLine = 16,
+            MaxIcons = 20,
+            FontSize = 12f
+        };
     }
 
     // --- Target ---

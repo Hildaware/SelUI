@@ -14,7 +14,17 @@ namespace SelUI.Rendering;
 /// </summary>
 public sealed class StatusRenderer
 {
-    private const float Gap = 4f; // gap between status icons, at the reference UI scale
+    /// <summary>Gap between status icons, at the reference UI scale. Public so edit-mode boxes can size a grid.</summary>
+    public const float Gap = 4f;
+
+    /// <summary>Remaining-time cutoff (seconds) splitting long "permanent" statuses from short ones (5 min).</summary>
+    private const float LongStatusThreshold = 300f;
+
+    // Each status icon gets a slim, slightly-rounded border, with the icon art rounded to match. These
+    // are reference-scale sizes — scaled with the UI like every other baked dimension.
+    private const float IconRounding = 3f;    // corner radius (px)
+    private const float BorderThickness = 2f; // border line width (px)
+    private const float BorderOpacity = 0.65f; // border alpha (black)
 
     private readonly IconCache _icons;
     private readonly LabelRenderer _labels;
@@ -91,10 +101,24 @@ public sealed class StatusRenderer
             var mine = myObjectId != 0 && status.SourceObject?.GameObjectId == myObjectId;
             if (cfg.OwnOnly && !mine) continue;
 
+            // Permanent / FC buffs (e.g. "The Heat of Battle") keep a stale RemainingTime that the game
+            // ignores — it shows them without a countdown. Treat them as timerless so we draw no bogus
+            // timer and sort/filter them as "permanent" rather than short.
+            var remaining = data.IsPermanent || data.IsFcBuff ? 0f : status.RemainingTime;
+
+            // Duration partition: timerless statuses count as effectively infinite (the "long" bucket).
+            if (cfg.Duration != DurationFilter.Any)
+            {
+                var effective = remaining <= 0f ? float.MaxValue : remaining;
+                var isLong = effective > LongStatusThreshold;
+                if (cfg.Duration == DurationFilter.LongOnly && !isLong) continue;
+                if (cfg.Duration == DurationFilter.ShortOnly && isLong) continue;
+            }
+
             var stacks = data.MaxStacks > 0 && status.Param > 0 ? status.Param : 0;
             // Cropped icons use the base art (stacks shown as text); uncropped use the per-stack icon.
             var iconId = cfg.CropIcon ? data.Icon : (uint)(data.Icon + Math.Max(0, stacks - 1));
-            into.Add(new Item(iconId, status.RemainingTime, stacks, status.StatusId, mine, buffs,
+            into.Add(new Item(iconId, remaining, stacks, status.StatusId, mine, buffs,
                 data.Name.ExtractText(), data.Description.ExtractText()));
         }
     }
@@ -174,7 +198,13 @@ public sealed class StatusRenderer
                     ? (new Vector2(4f / wrap.Width, 14f / wrap.Height),
                         new Vector2(1f - 4f / wrap.Width, 1f - 12f / wrap.Height))
                     : (Vector2.Zero, Vector2.One);
-                dl.AddImage(wrap.Handle, pos, pos + new Vector2(size), uv0, uv1, Colors.MultiplyAlpha(0xFFFFFFFFu, alpha));
+                var max = pos + new Vector2(size);
+                var rounding = IconRounding * v;
+                dl.AddImageRounded(wrap.Handle, pos, max, uv0, uv1, Colors.MultiplyAlpha(0xFFFFFFFFu, alpha), rounding,
+                    ImDrawFlags.RoundCornersAll);
+                // Border on the icon's edge (stroke centered on the bounds), matching the art's rounding.
+                dl.AddRect(pos, max, Colors.MultiplyAlpha(Colors.Black, alpha * BorderOpacity), rounding,
+                    ImDrawFlags.RoundCornersAll, BorderThickness * v);
 
                 // Timer: right-justified, anchored to the icon's bottom-right corner, and a touch
                 // larger than the rest of the status text.

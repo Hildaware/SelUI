@@ -1,5 +1,18 @@
 namespace SelUI.Modules.UnitFrames;
 
+/// <summary>How a status grid filters by remaining time, to split long "permanent" statuses from short ones.</summary>
+public enum DurationFilter
+{
+    /// <summary>No duration filter — show every status in the category.</summary>
+    Any,
+
+    /// <summary>Only long / timerless statuses (effective remaining over the long-status threshold).</summary>
+    LongOnly,
+
+    /// <summary>Only short statuses (effective remaining at/under the threshold); excludes timerless ones.</summary>
+    ShortOnly
+}
+
 /// <summary>
 ///     One collection of status icons (either buffs or debuffs) attached to a unit frame. Position is
 ///     an offset from the frame's origin so the collection can be placed independently.
@@ -33,6 +46,9 @@ public sealed class StatusListConfig
 
     /// <summary>Only show statuses that can be dispelled / cleansed.</summary>
     public bool CleansableOnly { get; set; }
+
+    /// <summary>Remaining-time partition: splits long "permanent" buffs (food, FC, etc.) from short combat buffs.</summary>
+    public DurationFilter Duration { get; set; } = DurationFilter.Any;
 
     /// <summary>Shallow copy (all members are value types). Used when distance-scaling a frame.</summary>
     public StatusListConfig Clone()
